@@ -1,6 +1,9 @@
-# EmotionCore for SurfCore
+# DSH-EmotionCore + ReflexArc + memory-lab
 
-**版本：0.3.1** · [MIT License](LICENSE)
+**新方案仓库** · 版本：0.3.1 · [MIT License](LICENSE)
+
+> 旧仓库 `EmotionCoreForDSH-surfcore` 是 v0.3.1 公开快照；当前插件、文档和
+> 长期更新以本仓库为准。显示名里的 `+` 不进入 URL slug。
 
 ## 制作理念
 
@@ -10,7 +13,15 @@
 
 EmotionCore 是运行在 SurfCore 之上的情绪与记忆层：本地评价、P 基线、每日账本、记忆修正，以及给 SurfCore 目的机制的情绪种子。
 
-> 内部 Python 包名暂时保留 `soulcore`，避免破坏插件 ID、数据库路径和已有 import；仓库与产品名统一为 **EmotionCore for SurfCore**。
+当前仓库同时收纳三块新方案：
+
+```text
+EmotionCore   本地记忆/情绪服务、L5 唤醒、分层调用
+ReflexArc     本地 L1、群聊触发、长期活动、鱼群记录
+memory-lab    只读多轴召回实验 + 意识海可视化
+```
+
+> 内部 Python 包名暂时保留 `soulcore`，避免破坏插件 ID、数据库路径和已有 import；仓库/产品显示名为 **DSH-EmotionCore + ReflexArc + memory-lab**。
 
 ## 目录
 
