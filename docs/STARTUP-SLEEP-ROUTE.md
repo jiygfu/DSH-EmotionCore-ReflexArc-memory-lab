@@ -53,11 +53,12 @@ SnowLuma 不由 DSH 的 `emotioncore-runtime` 托管。`soulcore-settings` 只�
 ```
 
 - **日结 daily**：`python -m soulcore daily`
-  - 收件箱同步 → 评价 → people → 事件 → consolidate → dream（线上事件复盘）→ 日结。
-  - 现有 daily 流程本身也会调用 `sleep_farewell.maybe_send("daily")` 和 `session_rotation.rotate_all(reason="daily")`；设置页按钮有确认。
+  - 评价 → people → 事件 → consolidate → dream（线上事件复盘）→ 日结。
+  - OneBot-only 路线跳过旧 SurfCore 的 inbox/export/farewell/rotation；它们只保留为显式迁移命令。
 - **完整睡眠 sleep**：`python -m soulcore sleep`
-  - 在 daily 的整理能力之外，额外走现有 `sleep` 流程：loop 维护、人物卡、睡眠告别、会话轮换、handoff、`sleep_runs(reason="sleep")` 等。
-  - 也会改变会话状态，所以按钮有确认。
+  - 在 daily 的整理能力之外，额外走现有 `sleep` 流程：loop 维护、人物卡、handoff、`sleep_runs(reason="sleep")` 等。
+  - OneBot-only 不执行 SurfCore farewell/session rotation；需要旧迁移时手动跑 `sync` / `export-surfcore` / `rotate-sessions`。
+  - 仍是显式动作，所以按钮有确认。
 
 自动整理由 `worker.py` 执行，不是设置页自己起定时器：
 

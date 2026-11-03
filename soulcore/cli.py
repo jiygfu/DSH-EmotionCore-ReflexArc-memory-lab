@@ -928,13 +928,12 @@ def cmd_sleep(args) -> int:
     person_cards = people.today_people(conn, day=dr["day_key"])
     cards = people_card.render_all(conn)  # 睡前刷新一人一档（M5）
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
-    try:
-        surfcore_exported = surfcore_export.export_surfcore(conn)
-    except Exception as exc:
-        # Historical SurfCore export is optional; never block OneBot sleep.
-        surfcore_exported = {"ok": False, "skipped": f"SurfCore export unavailable: {exc}"[:300]}
-    farewell = sleep_farewell.maybe_send("sleep")
-    rotated = session_rotation.rotate_all(reason="sleep")
+    # Legacy SurfCore hooks are intentionally not part of the OneBot sleep.
+    # The standalone sync/export-surfcore/rotate-sessions commands remain for
+    # old-data migration.
+    surfcore_exported = {"ok": True, "skipped": "OneBot-only: SurfCore export skipped"}
+    farewell = {"ok": True, "sent": False, "reason": "OneBot-only: SurfCore farewell skipped"}
+    rotated = {"ok": True, "skipped": "OneBot-only: SurfCore session rotation skipped", "rotated": []}
     loops_cleaned = loop_maintain.maintain()
     patience_state = patience.write(conn)
     seed = purpose_seed.write(conn)
@@ -989,16 +988,9 @@ def cmd_daily(args) -> int:
     db.init_db(conn)
     baseline = daybook.ensure_day_baseline(conn)
     repaired = db.repair_identity_status(conn)
-    try:
-        synced = inbox.sync_inbox(
-            conn,
-            surfcore_root=args.surfcore_root,
-            limit=args.sync_limit,
-            include_self=not args.no_self,
-        )
-    except Exception as exc:
-        # OneBot-only installs have no SurfCore inbox; daily must still work.
-        synced = {"ok": False, "skipped": f"SurfCore inbox unavailable: {exc}"[:300]}
+    # OneBot-only daily: no SurfCore inbox sync. `soulcore sync` remains the
+    # explicit migration command for old data.
+    synced = {"ok": False, "skipped": "OneBot-only: SurfCore inbox sync skipped"}
     appraised = None
     if not args.skip_appraise:
         appraised = appraise.appraise_pending(
@@ -1017,12 +1009,9 @@ def cmd_daily(args) -> int:
         review_events=True, event_limit=int(getattr(args, "event_limit", 12)),
     )
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
-    try:
-        exported = surfcore_export.export_surfcore(conn)
-    except Exception as exc:
-        exported = {"ok": False, "skipped": f"SurfCore export unavailable: {exc}"[:300]}
-    farewell = sleep_farewell.maybe_send("daily")
-    rotated = session_rotation.rotate_all(reason="daily")
+    exported = {"ok": True, "skipped": "OneBot-only: SurfCore export skipped"}
+    farewell = {"ok": True, "sent": False, "reason": "OneBot-only: SurfCore farewell skipped"}
+    rotated = {"ok": True, "skipped": "OneBot-only: SurfCore session rotation skipped", "rotated": []}
     patience_state = patience.write(conn)
     seed = purpose_seed.write(conn)
     sleep_count = db.record_sleep(
