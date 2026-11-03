@@ -14,14 +14,24 @@ from typing import Any
 
 SURFCORE_ROOT = Path.home() / ".dsh" / "surfcore"
 CONFIG_FILE = SURFCORE_ROOT / "config.json"
+BRIDGE_CONFIG_FILE = Path.home() / "surfcore" / "config.json"
 FALLBACK_FILE = Path(__file__).resolve().parent.parent / "data" / "appraisal-questions.jsonl"
 
 
 def _config() -> dict[str, Any]:
-    try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    merged: dict[str, Any] = {}
+    # Profile config first; the bridge config fills ownerQQ/console fields the
+    # profile does not define (including explicit nulls).
+    for path in (CONFIG_FILE, BRIDGE_CONFIG_FILE):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if key not in merged or merged[key] in (None, ""):
+                        merged[key] = value
+        except Exception:
+            continue
+    return merged
 
 
 def _fallback(message: str, error: str) -> None:

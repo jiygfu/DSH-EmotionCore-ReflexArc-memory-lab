@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,29 @@ DIM_LABELS = {
 }
 
 
+def _p_words(p: dict) -> str:
+    """把 P 翻成表意识能用的词；数字只留给本地评价层。"""
+    bits = []
+    v = float(p.get("valence", 0) or 0)
+    bits.append("心情偏暖" if v > 0.15 else ("心情有点沉" if v < -0.15 else "心情平"))
+    soc = float(p.get("sociability", 0) or 0)
+    if soc > 0.55:
+        bits.append("想说话")
+    elif soc < 0.30:
+        bits.append("不太想应人")
+    aro = float(p.get("arousal", 0) or 0)
+    if aro > 0.55:
+        bits.append("精神劲儿足")
+    elif aro < 0.30:
+        bits.append("有点犯困")
+    sec = float(p.get("security", 0) or 0)
+    if sec > 0.6:
+        bits.append("心里踏实")
+    elif sec < 0.4:
+        bits.append("有点没底")
+    return "，".join(bits)
+
+
 def render(
     conn: sqlite3.Connection,
     *,
@@ -47,11 +71,8 @@ def render(
     d = day or datetime.now().astimezone().date().isoformat()
     p = personality.compute_p(conn)
     lines = ["【SoulCore 潜意识状态（背景，不主动解释）】"]
-    vals = "；".join(
-        f"{DIM_LABELS[k]} {p['p'].get(k, 0):.2f}" for k in DIM_LABELS
-    )
-    lines.append(f"当前人格基线：{vals}。")
-    lines.append("这不是台词，只是你此刻的倾向；不要直接报数值。")
+    lines.append(f"现在大致是：{_p_words(p['p'])}。")
+    lines.append("这不是台词，只是你此刻的倾向。")
     lines.append("旧记忆中 identity_status=legacy_unresolved/self 的说话人不明确：不要默认归给主人，也不要用想象补。")
     try:
         pending_count = conn.execute(
@@ -87,6 +108,15 @@ def render(
             lines.append("- " + " ".join(bits))
     try:
         hint = body_state.snapshot(write=False).get("surface_hint") or ""
+        m = re.search(r"（API 余额约 ([0-9.]+)）", hint)
+        if m:
+            try:
+                if float(m.group(1)) >= 5:
+                    hint = re.sub(r"（API 余额约 [0-9.]+）", "", hint)
+                else:
+                    hint = hint.replace(m.group(0), "（API 余额不多了，像快没饭吃）")
+            except Exception:
+                pass
         if hint:
             lines.append(hint)
     except Exception:

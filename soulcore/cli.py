@@ -18,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import (affect, appraise, appraisal_learning, balance, body_state, consolidate, context_render, correction, daybook, db, desire, dream, handoff,
+from . import (
+    affect, appraise, loop_maintain, patience, people_card, appraisal_learning, balance, body_state, consolidate, context_render, correction, daybook, db, desire, dream, handoff,
                episodes, inbox, local_assist, people, personality, purpose_seed, retrieval, session_rotation, skill_manifest, skills, sleep_farewell, social, surfcore_export)
 
 try:
@@ -109,6 +110,87 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_pipeline(args) -> int:
+    """Incremental local pipeline: sync → appraise → episodes → derived files.
+
+    This is the single ordering contract used by the bridge timer. Building
+    episodes before appraisals would create importance=0 events.
+    """
+    conn = db.connect(_db_path(args))
+    db.init_db(conn)
+    today = db.localnow()[:10]
+    synced = inbox.sync_inbox(conn, surfcore_root=None, limit=500, include_self=True)
+    appraised = appraise.appraise_pending(conn, limit=500, code_only=True)
+    ep = episodes.build_day(conn, day=today)
+    cards = episodes.write_cards(conn, day=today)
+    context_render.write(conn, day=today)
+    patience_state = patience.write(conn)
+    brief = handoff.write(conn)
+    print(json.dumps({
+        "ok": True, "day": today, "synced": synced.get("new"),
+        "appraised": appraised.get("tried"), "episodes": ep.get("episodes"),
+        "cards": cards, "handoff": brief.get("path"),
+        "patience": patience_state.get("patience"),
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_catchup(args) -> int:
+    """启动补跑（方案 5）：当天没睡过就补一次轻量整理，不做轮换/告别/做梦。"""
+    conn = db.connect(_db_path(args))
+    db.init_db(conn)
+    today = db.localnow()[:10]
+    try:
+        done = conn.execute(
+            "SELECT COUNT(*) FROM sleep_runs WHERE day_key=? AND reason IN ('sleep','daily')",
+            (today,),
+        ).fetchone()[0]
+    except Exception:
+        done = 0
+    if done:
+        print(json.dumps({"ok": True, "skipped": "已睡过", "day": today}, ensure_ascii=False))
+        return 0
+    if getattr(args, "dry", False):
+        print(json.dumps({"ok": True, "dry": True, "would_run": "catchup", "day": today}, ensure_ascii=False))
+        return 0
+    synced = inbox.sync_inbox(conn, surfcore_root=None, limit=500, include_self=True)
+    daybook.ensure_day_baseline(conn, day=today)
+    # Episodes derive importance from appraisals. Never build them from pending
+    # memories: that creates importance=0 events and poisons L2/handoff.
+    appraised = appraise.appraise_pending(conn, limit=500, code_only=True)
+    episodes.build_day(conn, day=today)
+    episodes.write_cards(conn, day=today)
+    cons = consolidate.run(conn, mode="day_end")
+    db.record_sleep(conn, day_key=today, reason="catchup", rotated=False, farewell_sent=False, details={"catchup": True})
+    patience_state = patience.write(conn)
+    brief = handoff.write(conn)
+    context_render.write(conn, day=today)
+    cards = people_card.render_all(conn)
+    print(json.dumps({
+        "ok": True, "day": today, "synced": synced.get("new"),
+        "appraised": appraised.get("tried"), "consolidate": bool(cons),
+        "handoff": brief.get("path"), "patience": patience_state.get("patience"),
+        "people": cards.get("people"),
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_patience(args) -> int:
+    conn = db.connect(_db_path(args))
+    db.init_db(conn)
+    out = patience.write(conn)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_people_cards(args) -> int:
+    conn = db.connect(_db_path(args))
+    db.init_db(conn)
+    out = people_card.render_all(conn, limit=getattr(args, "limit", 50))
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_handoff(args) -> int:
     conn = db.connect(_db_path(args))
     db.init_db(conn)
@@ -132,7 +214,7 @@ def cmd_memory_stats(args) -> int:
         "fts_rows": conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0],
         "episodes": conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0],
         "sleep_runs_today": conn.execute(
-            "SELECT COUNT(*) FROM sleep_runs WHERE day_key=date('now','localtime')"
+            "SELECT COUNT(*) FROM sleep_runs WHERE day_key=date('now','localtime') AND reason IN ('sleep','daily')"
         ).fetchone()[0],
         "pending_appraisals": conn.execute(
             "SELECT COUNT(*) FROM memories WHERE appraisal_status != 'done'"
@@ -620,6 +702,22 @@ def cmd_memory(args) -> int:
         out["today_context_count"] = len(db.daily_context(conn, limit=limit))
     elif mode == "today":
         rows = db.daily_context(conn, limit=200)
+        out["source"] = "triggered"
+        if not rows:
+            # A day can have many messages but no retrieval-triggered rows.
+            # Fall back to the local day's raw memories instead of returning 0.
+            today_local = datetime.now().astimezone().date()
+            raw = conn.execute(
+                "SELECT * FROM memories WHERE COALESCE(sensitive,0)=0 AND status='active' ORDER BY ts DESC LIMIT 2000"
+            ).fetchall()
+            rows = []
+            for r in raw:
+                try:
+                    if db._parse_when(r["ts"]).astimezone().date() == today_local:
+                        rows.append(r)
+                except Exception:
+                    continue
+            out["source"] = "day_fallback"
         if pid:
             rows = [r for r in rows if r["person_id"] == pid]
         if scope:
@@ -815,21 +913,27 @@ def cmd_sleep(args) -> int:
     conn = db.connect(_db_path(args))
     db.init_db(conn)
     baseline = daybook.ensure_day_baseline(conn, day=args.day)
+    # Sleep must not build events from unappraised memories: episode importance
+    # comes from appraisals, and pending rows would become importance=0 cards.
+    appraised = appraise.appraise_pending(conn, limit=500, code_only=True)
     ep = episodes.build_day(conn, day=args.day)
     episode_cards = episodes.write_cards(conn, day=args.day)
     cons = consolidate.run(conn, mode=args.mode)
     dr = dream.run(conn, day=args.day, budget=args.budget, seed=args.seed)
     person_refresh = people.refresh(conn, day=dr["day_key"])
     person_cards = people.today_people(conn, day=dr["day_key"])
+    cards = people_card.render_all(conn)  # 睡前刷新一人一档（M5）
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
     surfcore_exported = surfcore_export.export_surfcore(conn)
-    seed = purpose_seed.write(conn)
     farewell = sleep_farewell.maybe_send("sleep")
     rotated = session_rotation.rotate_all(reason="sleep")
+    loops_cleaned = loop_maintain.maintain()
+    patience_state = patience.write(conn)
+    seed = purpose_seed.write(conn)
     sleep_count = db.record_sleep(
         conn, day_key=dr["day_key"], reason="sleep",
         rotated=bool(rotated.get("ok")), farewell_sent=bool(farewell.get("sent")),
-        details={"dream_id": dr["dream_id"], "rotation": rotated},
+        details={"dream_id": dr["dream_id"], "rotation": rotated, "loops": loops_cleaned},
     )
     brief = handoff.write(conn)
     packet = {
@@ -841,6 +945,7 @@ def cmd_sleep(args) -> int:
         "ambient": cons.get("ambient"),
         "today_important": dr["today_important"],
         "random_untriggered": dr["random_untriggered"],
+        "appraised": appraised.get("tried"),
         "sampled": dr["sampled"],
         "dream_id": dr["dream_id"],
         "people_refresh": person_refresh,
@@ -897,13 +1002,14 @@ def cmd_daily(args) -> int:
     dr = dream.run(conn, budget=args.budget, seed=args.seed)
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
     exported = surfcore_export.export_surfcore(conn)
-    seed = purpose_seed.write(conn)
     farewell = sleep_farewell.maybe_send("daily")
     rotated = session_rotation.rotate_all(reason="daily")
+    patience_state = patience.write(conn)
+    seed = purpose_seed.write(conn)
     sleep_count = db.record_sleep(
         conn, day_key=dr["day_key"], reason="daily",
         rotated=bool(rotated.get("ok")), farewell_sent=bool(farewell.get("sent")),
-        details={"rotation": rotated},
+        details={"rotation": rotated, "patience": patience_state.get("patience")},
     )
     brief = handoff.write(conn)
     out = {
@@ -976,6 +1082,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("memory-stats", help="local memory/episode/FTS counts as JSON")
     s.set_defaults(func=cmd_memory_stats)
+
+    s = sub.add_parser("pipeline", help="sync → appraise → episodes → handoff/context/patience")
+    s.set_defaults(func=cmd_pipeline)
+
+    s = sub.add_parser("catchup", help="startup catch-up sleep if today has no sleep record")
+    s.add_argument("--dry", action="store_true", help="only report what would run")
+    s.set_defaults(func=cmd_catchup)
+
+    s = sub.add_parser("patience", help="compute patience from load/relief and write patience.json")
+    s.set_defaults(func=cmd_patience)
+
+    s = sub.add_parser("people-cards", help="render one markdown card per person")
+    s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(func=cmd_people_cards)
 
     s = sub.add_parser("handoff", help="write deterministic sleep handoff brief")
     s.set_defaults(func=cmd_handoff)

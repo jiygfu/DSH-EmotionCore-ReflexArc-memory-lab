@@ -447,6 +447,42 @@ class Phase1Tests(unittest.TestCase):
             self.assertGreater(float(rows[0]["importance"]), 0.0)
             conn.close()
 
+    def test_episode_build_skips_pending_appraisals(self):
+        with tempfile.TemporaryDirectory() as td:
+            conn = db.connect(Path(td) / "test.db")
+            db.init_db(conn)
+            day = "2026-11-01"
+            db.upsert_memory(conn, source="surfcore", source_record_id="p1",
+                             text="还没有评价的消息", ts=f"{day}T10:00:00+08:00",
+                             scope="group", conversation_key="group:1")
+            self.assertEqual(episodes.build_day(conn, day=day)["episodes"], 0)
+            db.save_appraisal(conn, "surfcore:p1", DIMS, 0.2, 0.7, "测试", False, 1, "{}")
+            self.assertEqual(episodes.build_day(conn, day=day)["episodes"], 1)
+            conn.close()
+
+    def test_reflection_is_excluded_from_search_and_episodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            conn = db.connect(Path(td) / "test.db")
+            db.init_db(conn)
+            day = "2026-11-01"
+            event_id, _ = db.upsert_memory(
+                conn, source="surfcore", source_record_id="event",
+                text="跑团：哥布林巢穴，骰子过了", ts=f"{day}T10:00:00+08:00",
+                scope="group", identity_status="resolved", conversation_key="group:1")
+            reflect_id, _ = db.upsert_memory(
+                conn, source="surfcore", source_record_id="reflect",
+                text="跑团那段我翻不出来了，记忆里搜了一条都没命中",
+                ts=f"{day}T10:01:00+08:00", scope="group", identity_status="self",
+                conversation_key="group:1")
+            self.assertEqual(conn.execute("select status from memories where id=?", (reflect_id,)).fetchone()[0], "reflection")
+            db.save_appraisal(conn, event_id, DIMS, 0.2, 0.7, "测试", False, 1, "{}")
+            db.save_appraisal(conn, reflect_id, DIMS, 0.2, 0.7, "测试", False, 1, "{}")
+            hits = retrieval.search_memories(conn, "跑团 记忆", limit=5)
+            self.assertTrue(hits)
+            self.assertTrue(all(h["id"] != reflect_id for h in hits))
+            self.assertEqual(episodes.build_day(conn, day=day)["episodes"], 1)
+            conn.close()
+
     def test_body_pressure_damps_purpose_without_touching_p(self):
         drives = {"share": 0.8, "connect": 0.8, "consume": 0.8, "learn": 0.8}
         body = {"states": {"fatigue": 0.8, "sleepiness": 0.7, "cognitive_load": 0.7,

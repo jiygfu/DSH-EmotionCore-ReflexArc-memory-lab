@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import body_state, daybook, db, personality
+from . import body_state, daybook, db, patience, personality
 
 DIMENSIONS = personality.DIMENSIONS
 SURFCORE_HOME = Path.home() / ".dsh" / "surfcore"
@@ -89,11 +89,22 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, float(value)))
 
 
+def _patience_pressure() -> float:
+    """耐心低 → 欲望层的"消耗/想歇"压力。只在这里读本地耐心，不往上浮提示词。"""
+    try:
+        f = Path.home() / ".dsh" / "surfcore" / "patience.json"
+        st = json.loads(f.read_text(encoding="utf-8"))
+        v = float(st.get("patience", 0.65))
+        return max(0.0, min(1.0, (0.55 - v) / 0.55)) if v < 0.55 else 0.0
+    except Exception:
+        return 0.0
+
+
 def _drives(p: dict[str, Any], *, unresolved: float = 0.2) -> dict[str, float]:
     g = lambda k: _clamp(float(p.get(k, 0.0)))  # noqa: E731
     pos = max(0.0, float(p.get("valence", 0.0)))
     neg = max(0.0, -float(p.get("valence", 0.0)))
-    return {
+    d = {
         "play": _clamp(0.08 + 0.30 * g("openness") + 0.25 * g("arousal") + 0.15 * pos),
         "learn": _clamp(0.10 + 0.35 * g("openness") + 0.20 * g("self_efficacy") + 0.15 * (1 - g("caution"))),
         "install": _clamp(0.08 + 0.25 * g("openness") + 0.20 * g("self_efficacy") + 0.15 * (1 - g("caution"))),
@@ -104,6 +115,12 @@ def _drives(p: dict[str, Any], *, unresolved: float = 0.2) -> dict[str, float]:
         "create": _clamp(0.05 + 0.25 * g("openness") + 0.20 * g("self_efficacy") + 0.15 * g("arousal")),
         "consume": _clamp(0.05 + 0.25 * g("arousal") + 0.20 * pos + 0.10 * g("openness")),
     }
+    pressure = _patience_pressure()
+    if pressure > 0:
+        d["consume"] = _clamp(d["consume"] + 0.40 * pressure)
+        for k in ("play", "learn", "install", "create"):
+            d[k] = _clamp(d[k] * (1.0 - 0.35 * pressure))
+    return d
 
 
 def _emotion(p: dict[str, Any], drives: dict[str, float], unresolved: float) -> str:
@@ -190,7 +207,16 @@ def build(conn, *, day: str | None = None) -> dict[str, Any]:
     drives = _drives(p, unresolved=unresolved)
     emotion = _emotion(p, drives, unresolved)
     body = _body_context()
-    pending = _clamp(0.15 + 0.45 * unresolved + 0.25 * drives["connect"] + 0.10 * max(0.0, -float(p.get("valence", 0.0))))
+    # 未完成事件也算"想做点什么"的燃料（M6 接点）：复用 patience 的负荷口径，不新增表
+    try:
+        loop_load = patience.pending_load(patience._load_loops(), int(datetime.now().timestamp() * 1000))
+    except Exception:
+        loop_load = 0.0
+    pending = _clamp(
+        0.15 + 0.45 * unresolved + 0.25 * drives["connect"]
+        + 0.10 * max(0.0, -float(p.get("valence", 0.0)))
+        + 0.20 * loop_load
+    )
     drives, pending = _apply_body(drives, pending, body)
     urgency = _clamp(max(drives.values()) * 0.75 + unresolved * 0.25)
     char = active_character()
@@ -206,6 +232,7 @@ def build(conn, *, day: str | None = None) -> dict[str, Any]:
         "unresolved": round(unresolved, 4),
         "urgency": round(urgency, 4),
         "pending_chance": round(pending, 4),
+        "pending_loops": round(loop_load, 4),
         "body": body,
         "confidence": 0.7,
     }
