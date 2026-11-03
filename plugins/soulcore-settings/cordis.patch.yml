@@ -1,0 +1,4 @@
+- insert:
+    - id: soulcore-settings
+      name: '@soulproject/soulcore-settings'
+      config: {}

@@ -1,0 +1,43 @@
+# data / runtime
+data/
+backups/
+logs/
+diary/
+downloads/
+sleep/
+*.db
+*.db-*
+*.jsonl
+*.log
+
+# secrets / local config
+.env
+.github-token
+data/appraisal-config.json
+
+# editor / local backups
+*.bak
+*.bak-*
+*.orig
+*.rej
+
+# experiment artifacts (source stays, screenshots/results do not)
+experiments/assets/
+experiments/results/
+
+# third-party plugin source used only for inspection
+external/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db

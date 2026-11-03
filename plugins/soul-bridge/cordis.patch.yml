@@ -1,0 +1,10 @@
+- insert:
+    - id: soul-bridge
+      name: '@soulproject/soul-bridge'
+      config:
+        enabled: true
+        mark: false
+        pythonPath: 'python'
+        dbPath: './data/soulcore.db'
+        logPath: './data/shadow-bridge.jsonl'
+        timeoutMs: 4000

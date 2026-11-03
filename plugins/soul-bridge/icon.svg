@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="EmotionCore shadow bridge">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6ee7f9"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0f172a"/>
+  <path d="M16 34c0-9 7-16 16-16s16 7 16 16c0 8-6 14-14 14h-5l-7 6v-8c-4-2-6-6-6-12z" fill="url(#g)"/>
+  <circle cx="26" cy="31" r="3" fill="#0f172a"/>
+  <circle cx="38" cy="31" r="3" fill="#0f172a"/>
+  <path d="M27 39c3 2 7 2 10 0" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M13 20c5-7 13-11 22-11" fill="none" stroke="#a5f3fc" stroke-width="2" stroke-linecap="round" opacity=".7"/>
+</svg>

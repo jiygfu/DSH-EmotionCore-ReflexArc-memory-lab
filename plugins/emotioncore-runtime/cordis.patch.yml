@@ -1,0 +1,7 @@
+- insert:
+    - id: emotioncore-runtime
+      name: '@soulproject/emotioncore-runtime'
+      config:
+        enabled: true
+        port: 8765
+        pythonPath: python

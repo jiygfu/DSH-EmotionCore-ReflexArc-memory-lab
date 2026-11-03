@@ -1,0 +1,12 @@
+{
+  "name": "reflex-arc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ReflexArc local reflex subplugin for dsh-onebot-qq: dice, lightweight inbound hints, no model tool schema",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}

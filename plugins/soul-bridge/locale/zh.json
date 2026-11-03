@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "EmotionCore 影子桥",
+    "description": "观察 llm/stream，调用本地记忆检索与 P 快照，只记录、不改请求。"
+  }
+}

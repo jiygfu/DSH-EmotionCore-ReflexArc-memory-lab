@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "EmotionCore Runtime",
+    "description": "Starts the local EmotionCore service and maintenance worker when DeepSeek Harness starts."
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@soulproject/memory-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only memory-lab sidecar controller for DeepSeek Harness.",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "client.js"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  }
+}

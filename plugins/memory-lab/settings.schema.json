@@ -1,0 +1,36 @@
+{
+  "humanReview": {
+    "type": "boolean",
+    "default": false,
+    "label": "人工评审（调试）",
+    "hint": "仅在显式开启时生成空白评审表；正常运行时关闭，不是运行时流程的一部分。"
+  },
+  "reviewLimit": {
+    "type": "number",
+    "default": 8,
+    "label": "评审每路条数",
+    "hint": "生成评审表时 baseline / rrf 各取多少条。"
+  },
+  "reviewFile": {
+    "type": "string",
+    "default": "reports/rrf-human-review.json",
+    "label": "评审输出路径"
+  },
+  "termsFile": {
+    "type": "string",
+    "default": "data/memory-lab.db",
+    "label": "term 表数据库",
+    "hint": "memory-lab 自己的 term / domain 权重库，不是 soulcore.db。"
+  },
+  "vectorEnabled": {
+    "type": "boolean",
+    "default": false,
+    "label": "启用向量通道（实验）",
+    "hint": "当前 nomic-embed-text 中文排序不可靠，默认关闭。"
+  },
+  "vectorModel": {
+    "type": "string",
+    "default": "nomic-embed-text",
+    "label": "embedding 模型"
+  }
+}

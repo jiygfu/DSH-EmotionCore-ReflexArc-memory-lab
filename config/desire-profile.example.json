@@ -1,0 +1,6 @@
+{
+  "_comment": "rational=阈值/判断标准; affective=积累增益; inertia=情绪惯性(衰减速度). 不填则从角色初始 P 推导。",
+  "rational": 0.66,
+  "affective": 0.70,
+  "inertia": 0.68
+}

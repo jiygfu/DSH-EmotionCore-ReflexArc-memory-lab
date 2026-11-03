@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="EmotionCore">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="15" fill="url(#g)"/>
+  <circle cx="24" cy="25" r="5" fill="#fff" opacity=".95"/>
+  <circle cx="40" cy="25" r="5" fill="#fff" opacity=".95"/>
+  <path d="M20 42c4-5 8-7 12-7s8 2 12 7" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".95"/>
+  <circle cx="24" cy="25" r="1.8" fill="#1e3a8a"/>
+  <circle cx="40" cy="25" r="1.8" fill="#1e3a8a"/>
+</svg>

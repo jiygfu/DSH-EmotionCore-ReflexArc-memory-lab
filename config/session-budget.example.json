@@ -1,0 +1,5 @@
+{
+  "enabled": false,
+  "maxCacheHit": 120000,
+  "intervalMs": 900000
+}

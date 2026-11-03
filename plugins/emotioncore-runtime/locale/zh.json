@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "EmotionCore 运行时",
+    "description": "随 DSH 启动本地 EmotionCore 服务与维护 worker；不参与聊天回复。"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "emotioncore-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "EmotionCore adapter subplugin for dsh-onebot-qq: local QQ skills, identity, memory bridge",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}

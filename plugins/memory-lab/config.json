@@ -1,0 +1,9 @@
+{
+  "humanReview": false,
+  "reviewLimit": 8,
+  "reviewFile": "reports/rrf-human-review.json",
+  "termsFile": "data/memory-lab.db",
+  "note": "Human review is a debugging switch only. It should remain false in normal runs.",
+  "vectorEnabled": false,
+  "vectorModel": "nomic-embed-text"
+}

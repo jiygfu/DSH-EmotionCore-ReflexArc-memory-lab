@@ -1,0 +1,6 @@
+- insert:
+    - id: memory-lab
+      name: '@soulproject/memory-lab'
+      config:
+        enabled: true
+        port: 8766
