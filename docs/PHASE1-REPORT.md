@@ -1,5 +1,8 @@
 # Phase 1 真实记忆测试报告
 
+> **历史文档 / Legacy**：本文的 SurfCore 同步/注入实验已退役；当前项目为
+> OneBot-only，不依赖 SurfCore。
+
 日期：2026-10-29  
 范围：本地记忆 + 本地评价 + 情感汇总  
 模型：`huihui_ai/qwen3-vl-abliterated:2b-instruct-q4_K_M`  

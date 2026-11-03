@@ -1,5 +1,8 @@
 # SurfCore 更新与 SoulCore 修改保护
 
+> **历史文档 / Legacy**：当前项目不再跟随 SurfCore 更新，OneBot-only；
+> 本文只保留旧维护经验。
+
 日期：2026-10-30
 
 ## 现状

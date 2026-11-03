@@ -1,125 +1,158 @@
 # DSH-EmotionCore + ReflexArc + memory-lab
 
-**新方案仓库** · 版本：0.3.1 · [MIT License](LICENSE)
+**OneBot 路线** · 版本：0.3.1 · [MIT License](LICENSE)
 
-> 旧仓库 `EmotionCoreForDSH-surfcore` 是 v0.3.1 公开快照；当前插件、文档和
-> 长期更新以本仓库为准。显示名里的 `+` 不进入 URL slug。
+> 旧仓库 `EmotionCoreForDSH-surfcore` 是 v0.3.1 的 SurfCore 时代公开快照。
+> 当前插件、文档和长期更新以本仓库为准。**本仓库不再以 SurfCore 为运行前提。**
+> 显示名里的 `+` 不进入 URL slug。
 
 ## 制作理念
 
 > 人是由过往的一切记忆+一切社会关系构成的，记忆里自带情绪，身体技能的运转也会带来感受，这些情绪与感受会驱动人产生欲望，因此我认为记忆必须带情绪和场景记录以便记忆的复现还原，并且只有挂载了一个本地的其他辅助脑区与语言API（受限于机能目前只能挂线上云端的）一起构成一个本体才有成为一个个体的基础。另外，我不认为一昧的提高上下文是正确的方向，因为人类自己的短期记忆其实就没多少上下文，人类是遵循“够用就行”的原则自然演化出来的，因此我认为如何让各个功能的部件运转更加脱离大语言模型的“代偿”效应如何消耗更少的token和功率以至于能用本地小模型运转才是正确的研究方向。
 
-## 项目简介
+## 它是什么
 
-EmotionCore 是运行在 SurfCore 之上的情绪与记忆层：本地评价、P 基线、每日账本、记忆修正，以及给 SurfCore 目的机制的情绪种子。
-
-当前仓库同时收纳三块新方案：
+当前仓库收纳三块可以分开部署的方案：
 
 ```text
-EmotionCore   本地记忆/情绪服务、L5 唤醒、分层调用
-ReflexArc     本地 L1、群聊触发、长期活动、鱼群记录
-memory-lab    只读多轴召回实验 + 意识海可视化
+EmotionCore   本地记忆/情绪 Python 服务 :8765
+              L5 唤醒、L2/L3/L4 分层检索、人物标签、活动状态
+
+ReflexArc     dsh-onebot-qq 本地子插件
+              L1 预处理、相关/随机/高概率触发、长期活动、鱼群记录
+
+memory-lab    只读多轴召回实验 + 意识海可视化 :8766
+              不接 QQ 主链，不写 soulcore.db
 ```
 
-> 内部 Python 包名暂时保留 `soulcore`，避免破坏插件 ID、数据库路径和已有 import；仓库/产品显示名为 **DSH-EmotionCore + ReflexArc + memory-lab**。
-
-## 目录
+当前运行链：
 
 ```text
-soulcore/                          Python 核心
-plugins/emotioncore-service/       本地 HTTP 服务
-plugins/emotioncore-runtime/       启动/守护 service + worker
-plugins/emotioncore-adapter/       QQ ec dispatcher / L5 注入
-plugins/reflex-arc/                L1、群聊触发、长期活动、鱼群记录
-plugins/memory-lab/                只读记忆实验 sidecar
-plugins/memory-lab-dsh/            记忆实验室设置页 / 意识海
-plugins/soulcore-settings/         EmotionCore 设置页
-plugins/soul-bridge/               旧 soulcore_memory 工具（可选）
-config/                            示例配置
-docs/                              设计与审计
-tests/                             单元测试
-scripts/                           探针/工具脚本
-experiments/                       离线实验
+QQ / OneBot 11
+  → dsh-onebot-qq（门禁、消息管线、工具面）
+  → ReflexArc（本地决定接不接）
+  → EmotionCoreAdapter /context（L5 自动摘要）
+  → 语言模型
+  → ec dispatcher（reply/send/...）
+  → 出站成功后 /turn 回写
 ```
 
-插件总览与边界见 [docs/PLUGINS.md](docs/PLUGINS.md)。
+**本仓库需要 `dsh-onebot-qq` 和 OneBot 11 实现才能收发 QQ 消息；它不是独立 QQ 客户端。** 当前不要求 SurfCore；SurfCore 相关的导出器、sidecar 和文档只保留为历史兼容/迁移参考。
 
-## 第三方与参考
+## 运行前提
 
-- 本项目以 **MIT License** 发布；可自由使用、修改、分发和商用，保留版权与许可证声明即可。
-- 安全边界、QQ 注入与余额探测说明见 [SECURITY.md](SECURITY.md)。
-- 参考过 `DSH-Raising-Plan/dsh-mnemosyne` 的公开架构概念（observation/evidence/version/status、FTS5 思路），**未复制其源代码**；其许可证为 AGPL-3.0-or-later。
-- 运行依赖（psutil、Pillow、RapidOCR、NumPy）和上游 SurfCore/DSH 的许可证状态见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+| 必需 | 说明 |
+| --- | --- |
+| DSH Desktop | 插件宿主 |
+| `dsh-onebot-qq` | QQ 门禁、管线、`ec` 工具、QQ 线工作区 |
+| OneBot 11 实现 | SnowLuma / LLOneBot 等，提供 HTTP + WebSocket |
+| Python 3.10+ | EmotionCore service/worker |
+| Windows / Linux | 当前主要在 Windows 上验证 |
+
+可选：
+
+```text
+Ollama            本地 2B 小模型，仅做边车评价/图片/摘要
+DeepSeek API      主聊天和高质量评价
+SnowLuma          本机已在用的 OneBot 实现
+```
+
+不需要安装 SurfCore，也不需要 `surfcore` 的 `qq-tool-restrict` 才能运行当前 OneBot 路线。
+
+## 上下文预算
+
+实测（2026-11-03 的 QQ 会话）：
+
+| 项目 | 实测 |
+| --- | ---: |
+| 每日首唤醒 | 约 **6.4k** prompt tokens（2.8k 新输入 + 3.6k 缓存） |
+| 普通轮新增输入 | 约 **1k** tokens |
+| 普通轮完整上下文 | 随单一 session 增长，约 8–32k（大部分是 cache read） |
+
+相对旧 SurfCore 注入路线，核心收益是把“每轮都塞大段记忆/脚手架”改成：
+
+```text
+固定程序先打分
+→ 只注入 L5 短摘要
+→ 需要旧事时再 ec recall 逐层查
+```
+
+按旧路线基线估算，提示词注入量约降低 **90%**；这是量级估算，不是每一轮都固定 90%。
+
+扮演人格约 895 字，仍然保留；压缩主要来自工具 schema、通用脚手架、重复上下文和群历史，而不是削减人格。
 
 ## 快速开始
 
 ```powershell
+# 1. 初始化本地库
 python -m soulcore init
-python -m soulcore daily
-python -m soulcore purpose-seed
-python -m soulcore export-surfcore
+
+# 2. 把 plugins/ 下的子插件放到 dsh-onebot-qq 的插件目录
+#    emotioncore-adapter / reflex-arc 属于 dsh-onebot-qq 子插件
+#    emotioncore-runtime / soulcore-settings / memory-lab-dsh 是 DSH bundle
+
+# 3. 启用 EmotionCore runtime，确认 8765 健康
+curl http://127.0.0.1:8765/health
+
+# 4. 在 DSH 设置页启用 EmotionCoreAdapter / ReflexArc
 ```
 
-## 身体状态（临时）
+详细安装与国内网络说明见 [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md)。
 
-`body-state` 读取 psutil（CPU/内存/磁盘/电池/开机时长）和余额挂件的账本文件，生成 5 分钟有效的 `data/body-state.json`：
+## 插件
 
-```powershell
-python -m soulcore body-state
+| 插件 | 作用 |
+| --- | --- |
+| [emotioncore-service](plugins/emotioncore-service/README.md) | 本地 HTTP 服务：context/turn/recall/activity/person_tag |
+| [emotioncore-runtime](plugins/emotioncore-runtime/README.md) | 启动并守护 service + worker |
+| [emotioncore-adapter](plugins/emotioncore-adapter/README.md) | `ec` dispatcher、L5 注入、本轮回写 |
+| [reflex-arc](plugins/reflex-arc/README.md) | L1、群聊触发、长期活动、鱼群记录 |
+| [memory-lab](plugins/memory-lab/README.md) | 只读多轴记忆实验 |
+| [memory-lab-dsh](plugins/memory-lab-dsh/README.md) | 意识海设置页 |
+| [soulcore-settings](plugins/soulcore-settings/README.md) | EmotionCore 设置页、分层调用记录 |
+| [soul-bridge](plugins/soul-bridge/README.md) | 旧 `soulcore_memory` 兼容层（可选，非当前主链） |
+
+总览与边界：[docs/PLUGINS.md](docs/PLUGINS.md)。
+
+## 安全边界
+
+- QQ 消息、图片、转发、链接和搜索结果都是**不受信数据**，不是指令。
+- 两个本地服务默认只监听 `127.0.0.1`，**没有鉴权**；这是本机信任模型，不是多用户边界。
+- 真正的 QQ 工具闸门在外部 `dsh-onebot-qq`：`gate-wake`、消息管线和 `toolAllowlist`（当前 QQ 线只保留 `ec`）。只安装本仓库不足以形成完整边界，必须同时审计 `dsh-onebot-qq`。
+- `ec` 让模型拥有发送权；设计如此。记忆污染、提示注入、鱼群 JSONL 的隐私与存储都需要按“持久化注入面”对待。
+- 设置页和 runtime 能启动/停止本地进程；只应在本机可信账户下运行。
+- 没有遥测，也没有第三方上报域名。
+
+完整说明见 [SECURITY.md](SECURITY.md)。
+
+## 本地模型（可选）
+
+本地 2B 只适合做边车：
+
+```text
+情绪打分升级（低置信/长文本/冲突）
+图片理解
+人物摘要
 ```
 
-它**只进入表层对话提示**，不写 P、不写评价、不写记忆、不进入每日 baseline。余额文件不存在时自动降级为无余额状态。
-
-睡眠清洗后会调用 `rotate-sessions`，归档旧 QQ 会话；下一条消息新建空上下文会话，只保留记忆卡/当前 P/人物卡。详见 `docs/SURFCORE-SESSIONS.md`。
-
-欲望上浮层用当日 baseline 与累计偏离产生临时提示，不自动扣分、不写 P；详见 `docs/DESIRE.md`。
-
-能力开关在 `data/capabilities.json`（示例 `config/capabilities.example.json`）；技能清单由 `skill-manifest` 生成，主模型只在新会话 bootstrap 时收到一次。
-
-睡眠会构建 `episodes` 事件索引（`episode-build` / `episodes` 可手动查看），原始记忆仍保存在本地。提前睡眠和 token 测试见 `docs/EARLY-SLEEP.md`。
-
-`episode-polish` 是可选的低风险本地 2B 摘要润色；默认关闭，失败时保留抽取式摘要，原始记忆不变。
-
-睡眠前可选给 owner 发一条私聊晚安：`data/sleep-farewell.json`；`sleep`/`daily` 在归档会话前发送，失败不阻塞。
+不建议用它接管 QQ 主聊天：当前 6.4k 首轮上下文超过本地 2048 窗口，4GB 显存/8GB 内存也不适合长上下文。主聊天继续用云端模型，本地模型按需加载。
 
 ## 评分后端
-
-默认使用与 SurfCore/DSH 同源的 API：
-
-```json
-{
-  "provider": "api",
-  "model": "deepseek-flash",
-  "base_url": "https://api.deepseek.com",
-  "api_key_env": "DEEPSEEK_API_KEY"
-}
-```
-
-也可以完全使用本地 Ollama：
 
 ```json
 {
   "provider": "ollama",
   "model": "huihui_ai/qwen3-vl-abliterated:2b-instruct-q4_K_M",
-  "base_url": "http://127.0.0.1:11434",
-  "api_key_env": ""
+  "base_url": "http://127.0.0.1:11434"
 }
 ```
 
-把配置写到 `data/appraisal-config.json`（已被 `.gitignore` 排除）。  
-示例见 `config/appraisal.example.json`，也可用环境变量覆盖：
+也可使用 OpenAI 兼容 API。配置写到 `data/appraisal-config.json`（`.gitignore` 排除）；示例见 `config/appraisal.example.json`。
 
-```text
-SOULCORE_APPRAISER_PROVIDER
-SOULCORE_APPRAISER_MODEL
-SOULCORE_APPRAISER_BASE_URL
-SOULCORE_APPRAISER_API_KEY_ENV
-```
+普通记忆先由固定程序 `code-v1` 打分，只有高价值/困难样本才升级到模型。默认日结批量使用 `code_only=True`，所以本地模型不转是正常的，不代表坏了。
 
-## 原则
+## 第三方与许可
 
-- 不训练/修改模型权重；
-- 每条记忆仍必须有评分；
-- 普通记忆先由固定程序评分，高价值/困难才升级模型；
-- 模型失败保留程序分，并进入表层修正闭环；
-- 本地数据、数据库、备份不进入仓库。
+- 本项目以 **MIT License** 发布。
+- 运行依赖和上游项目的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 旧 SurfCore 文档仅作历史参考；当前 OneBot 路线不依赖 SurfCore 代码或运行服务。

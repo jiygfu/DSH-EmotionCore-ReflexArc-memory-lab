@@ -1,5 +1,8 @@
 # SurfCore 会话与上下文
 
+> **历史文档 / Legacy**：当前会话由 `dsh-onebot-qq` 管理，OneBot-only；
+> 本文的 SurfCore session 机制仅作历史参考。
+
 ## 现状
 
 SurfCore 给每个 QQ 会话维护一个持久 DSH session：

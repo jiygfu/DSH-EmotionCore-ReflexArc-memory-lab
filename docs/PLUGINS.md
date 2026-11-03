@@ -1,5 +1,8 @@
 # 插件索引
 
+当前运行路线是 **OneBot-only**：DSH + `dsh-onebot-qq` + OneBot 11 + 本仓库插件。
+SurfCore 不是运行依赖；旧 SurfCore 文档仅作历史参考。
+
 本仓库的 DSH/EmotionCore 插件。每个目录都有独立 README。
 
 | 插件 | 类型 | 作用 | 当前状态 |

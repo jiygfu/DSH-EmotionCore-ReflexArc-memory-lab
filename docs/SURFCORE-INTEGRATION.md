@@ -1,6 +1,9 @@
 # SurfCore × SoulCore 记忆整合方案
 
-> 状态：sidecar 导出与 SurfCore 读取合并已实现（2026-10-29）。
+> **历史文档 / Legacy**：当前项目已切到 OneBot-only，SurfCore 不是运行依赖；
+> 本文只保留旧 sidecar/集成设计参考。
+
+> 状态：旧路线 sidecar 导出与 SurfCore 读取合并（2026-10-29，已退役）。
 > 当前导出：29 条 enrichment、6 条 extension（5 人物卡 + 1 情感/P），共 35 行。
 > SurfCore 读取层已支持 `soulcore` 字段；DSH 宿主需重启才会加载最新 `memory-card.js`。
 

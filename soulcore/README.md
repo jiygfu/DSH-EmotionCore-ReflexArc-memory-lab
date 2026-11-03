@@ -1,12 +1,18 @@
-# SoulCore Phase 1
+# SoulCore core (OneBot-only)
 
-本地记忆 + 评价 + 情感状态原型。  
-当前已通过 `soul-bridge` 向 DSH 提供只读 `soulcore_memory` 工具；不再只是离线原型。
+本地记忆 + 评价 + 情感状态核心。
+当前主链是 DSH + `dsh-onebot-qq` + OneBot 11；`soul-bridge` 的
+`soulcore_memory` 是旧兼容层，当前的记忆查询入口是 `emotioncore-adapter` 的
+`mcp__qq__ec(action="recall", ...)`。
+
+> **历史说明**：本文件里的 `sync`、`export-surfcore`、`SurfCore root` 等段落
+> 属于旧 SurfCore 路线，不是当前安装步骤。当前运行只要求本地
+> `data/soulcore.db`，不要求 SurfCore。
 
 ## 做什么
 
 - SQLite 存记忆、评价、情感快照、评价队列
-- 只读同步 SurfCore 当前角色的 `memory-card.json`
+- 旧 SurfCore 路线可选只读同步 `memory-card.json`（历史兼容，非必需）
 - 用本地 Ollama 模型 `huihui_ai/qwen3-vl-abliterated:2b-instruct-q4_K_M` 做文本评价
 - 每条记忆记录评价向量、`encoding_familiarity`、`unresolved`
 - 计算最近评价的情感汇总：valence / arousal / stress / unresolved
@@ -37,7 +43,7 @@ python -m soulcore memory --mode overview
 python -m soulcore memory --mode search --query "AI" --person <ownerQQ>
 python -m soulcore memory --mode range --date 2026-10-29
 python -m soulcore memory-log --limit 20
-python -m soulcore export-surfcore
+python -m soulcore export-surfcore   # 历史兼容，可选
 python -m soulcore felt-backfill --limit 30
 python -m soulcore day-summary
 python -m soulcore day-baseline
@@ -55,11 +61,12 @@ python -m soulcore episodes
 python -m soulcore rotate-sessions --reason manual
 ```
 
-`memory` 的普通关键词搜索优先复用 SurfCore 的 `recallFullMemory()`；带 person/scope/日期时用本地索引补足。
+`memory` 的普通关键词搜索使用本地 `soulcore.db` 的 FTS/索引；不再依赖
+SurfCore 的 `recallFullMemory()`。`sync`/`export-surfcore` 只作为旧数据迁移工具。
 
 ## 评分后端
 
-默认使用与 SurfCore/DSH 同源的 API：
+默认使用 DeepSeek API；也可以完全本地 Ollama：
 
 ```json
 {
@@ -86,7 +93,8 @@ python -m soulcore rotate-sessions --reason manual
 每次 `soulcore_memory` 工具调用都会追加到 `soulproject/data/memory-tool-calls.jsonl`。
 
 手动睡前也可以双击 `soulproject\sleep.cmd`。  
-`sleep` 只做本地数值整理和 packet 导出，不生成日记；日记/明天计划最终交给 SurfCore 的高层 API。
+`sleep` 只做本地数值整理和 packet 导出，不生成日记；日记/明天计划可以由外部
+语言层处理，但当前 OneBot 路线不依赖 SurfCore。
 
 `dream --diary` 是本地实验，不是最终路径。
 ```
@@ -123,7 +131,8 @@ python -m soulcore memory --mode person --person <ownerQQ>
 `memory` 是给表层意识的只读记忆查询：overview / today / search / person / p。
 
 也可以双击 `soulproject\daily.cmd`。  
-`render-context` 只生成本地 P/人物卡文件，尚未注入 SurfCore。
+`render-context` 只生成本地 P/人物卡文件；当前运行链通过 EmotionCore
+`/context` 注入 L5 摘要，不走 SurfCore。
 python -m soulcore appraise --limit 5
 ```
 
@@ -137,8 +146,9 @@ $env:PYTHONPATH = "<REPO_ROOT>"
 
 - 默认数据库：`soulproject/data/soulcore.db`
 - 可用 `--db` 指定其他路径
-- SurfCore 根目录默认：`<USERPROFILE>\.dsh\surfcore`
-- 只读字段：`memory-card.json` 的 records
+- 旧 SurfCore 同步器可选读取 `<USERPROFILE>\.dsh\surfcore`；
+  当前 OneBot 路线不需要该目录
+- 当前记忆写入来自 `emotioncore-adapter` 的 `/turn`
 
 ## 评价输出
 

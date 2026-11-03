@@ -1,7 +1,10 @@
-﻿> 层级命名以 [LAYERS.md](LAYERS.md) 为准；本文的 L0–L2 是历史命名（对应关系见该文末）。
+> **历史文档 / Legacy**：本文记录的 SurfCore/桌宠路线已退役；当前运行路线为
+> DSH + `dsh-onebot-qq` + OneBot 11，不依赖 SurfCore。
+>
+> 层级命名以 [LAYERS.md](LAYERS.md) 为准；本文的 L0–L2 是历史命名（对应关系见该文末）。
 # SoulProject 计划 v0.4
 
-> 状态：设计基线，未写代码，未修改 SurfCore  
+> 状态：历史设计基线，未写代码，未修改 SurfCore
 > 日期：2026-10-29  
 > 目标：在不改 SurfCore 的前提下，为桌宠增加本地长期记忆、熟悉感、性格读出（P）与闲时记忆维护。
 
