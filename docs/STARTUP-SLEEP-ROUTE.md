@@ -73,6 +73,10 @@ SnowLuma 不由 DSH 的 `emotioncore-runtime` 托管。`soulcore-settings` 只�
 
 ### 事件复盘（dream）
 
+> 当前 `data/dream-config.json` / 内建 `DREAM.enabled` 默认是 **false**：
+> 旧 backlog 先人工复核，线上复盘不参与自动睡眠。以下流程仅在显式
+> `enabled=true` 时执行。
+
 `dream.run(..., review_events=True)` 会：
 
 1. 用现有 `retrieval.search_memories` 找相关旧记忆/联想；

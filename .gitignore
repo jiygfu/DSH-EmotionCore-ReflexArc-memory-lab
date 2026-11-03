@@ -25,6 +25,9 @@ data/appraisal-config.json
 experiments/assets/
 experiments/results/
 
+# private human-review exports (personal chat content; local only)
+reports/unfinished-events-*
+
 # third-party plugin source used only for inspection
 external/
 

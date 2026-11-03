@@ -36,6 +36,10 @@ APPRAISER = {
 # Sleep "dream" event review. Deliberately online-only: local 2B is used for
 # appraisal/vision side work, not for deciding whether a long event ended.
 DREAM = {
+    # Temporarily off: old backlog is human-reviewed first, and nightly online
+    # event review is too expensive. Keep the API path for an explicit manual
+    # deep review only.
+    "enabled": False,
     "provider": "api",
     "model": "deepseek-flash",
     "base_url": "https://api.deepseek.com",

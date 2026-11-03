@@ -91,9 +91,9 @@ appraise → episodes/threads → consolidate → dream（含线上事件复盘�
 
 - **daily** 和 **sleep** 都会先做 `consolidate`，再做 `dream`，不会再出现“睡了但没整理”或“整理了但没睡”的分叉。
 - **自动 worker 执行 `daily_cycle`**：不告别、不轮换 QQ 会话；手动 `sleep` 仍可做完整整理。OneBot-only 路线会跳过旧 SurfCore 的 inbox/export/farewell/rotation；`soulcore sync` / `export-surfcore` / `rotate-sessions` 只保留为显式迁移命令。
-- `dream` 里的**事件复盘使用线上 API**，不再用本地 2B 判断事件是否结束。
+- `dream` 的**线上事件复盘默认关闭**：旧 backlog 先做人工复核，不再每晚自动跑 API。
+- 线上复盘代码保留给显式的手动深度复盘；它只给 `resolved/ongoing/waiting/abandoned` 建议，本地规则复核后才写回。
 - 事件复盘会先用自带 `retrieval.search_memories` 检索相关旧记忆/联想，再看线程片段、未答问题/请求和收尾信号。
-- 线上模型只给 `resolved/ongoing/waiting/abandoned` 建议；本地规则会检查未答问题/请求、置信度和当前状态后才写回，不会让模型单独决定关闭。
 - 不重要刷屏/吹水：`consolidate` 和 dream 的 `chatter` 判断会把 `affect_weight` 置 0、`consolidation_state='ignored'`，原文仍保留在 `soulcore.db`，仍可被检索，但不参与情绪/P，也不再注入上下文。
 
 线上事件复盘配置：

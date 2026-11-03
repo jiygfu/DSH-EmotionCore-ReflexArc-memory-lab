@@ -62,9 +62,9 @@ python -m soulcore episodes
 python -m soulcore rotate-sessions --reason manual
 ```
 
-`dream --events` 读取 `data/dream-config.json`（示例 `config/dream.example.json`），
-使用线上 API；不会回落到本地 2B。`sleep`/`daily` 会先 `consolidate` 再
-`dream --events`，两者固定绑定。
+`dream --events` 读取 `data/dream-config.json`（示例 `config/dream.example.json`）。
+线上事件复盘默认 `enabled=false`（旧 backlog 先人工复核）；显式开启后才走线上
+API，不会回落到本地 2B。`sleep`/`daily` 会先 `consolidate` 再 `dream`，两者固定绑定。
 
 `memory` 的普通关键词搜索使用本地 `soulcore.db` 的 FTS/索引；不再依赖
 SurfCore 的 `recallFullMemory()`。`sync`/`export-surfcore` 只作为旧数据迁移工具。

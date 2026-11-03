@@ -267,6 +267,8 @@ def review_events(
     No local Ollama fallback is attempted.
     """
     cfg = dream_config()
+    if cfg.get("enabled") is not True:
+        return {"enabled": False, "skipped": "online dream review disabled"}
     if not _online(cfg):
         return {"enabled": False, "skipped": "dream provider is not online"}
     key = _api_key(cfg)
