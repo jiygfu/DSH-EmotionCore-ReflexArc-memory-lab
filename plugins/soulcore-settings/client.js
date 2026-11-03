@@ -234,8 +234,8 @@ window.__ModuleLoader__.load({
 
           h('div', { style: { borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10 } },
             h('div', { style: { ...styles.sectionTitle, marginBottom: 2 } }, '睡眠整理'),
-            h('div', { style: { ...styles.sectionHint, marginBottom: 8 } }, '自动睡眠由 worker 做纯本地 daily_cycle，不告别、不轮换。手动「日结 daily」和「完整睡眠 sleep」都会走现有流程，可能触发告别/轮换，执行前会确认。'),
-            h(Row, { first: true, name: '自动睡眠整理', desc: `每天 ${String(settings.sleepHour ?? 4).padStart(2, '0')}:00 由维护 worker 执行纯本地整理；关闭后仍可手动整理。` },
+            h('div', { style: { ...styles.sectionHint, marginBottom: 8 } }, '自动睡眠由 worker 执行 daily_cycle：本地 consolidate + 线上 dream 事件复盘；不告别、不轮换。手动「日结 daily」和「完整睡眠 sleep」都会走同一整理链（consolidate → dream → 日结），执行前会确认。'),
+            h(Row, { first: true, name: '自动睡眠整理', desc: `每天 ${String(settings.sleepHour ?? 4).padStart(2, '0')}:00 由维护 worker 执行整理链；关闭后仍可手动整理。` },
               h(Toggle, {
                 checked: settings.sleepAuto !== false, disabled: !!busy,
                 onChange: (v) => { set('sleepAuto', v); void doAction('sleep-schedule', { auto: v, hour: Number(settings.sleepHour ?? 4) }) },

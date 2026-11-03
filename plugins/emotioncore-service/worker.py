@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from soulcore import appraise, body_state, consolidate, daybook, db, dream, episode_review, episodes, handoff, patience, people, purpose_seed, thread_loops, thread_model  # noqa: E402
+from soulcore import appraise, body_state, consolidate, daybook, db, dream, episodes, handoff, patience, people, purpose_seed, thread_loops, thread_model  # noqa: E402
 
 LOG = Path(os.environ.get("EMOTIONCORE_WORKER_LOG") or (ROOT / "logs" / "emotioncore-worker.log"))
 SCHEDULE = Path(os.environ.get("EMOTIONCORE_SCHEDULE") or (ROOT / "data" / "emotioncore-schedule.json"))
@@ -159,20 +159,25 @@ def daily_cycle(db_path: str, *, hour: int, force: bool = False) -> bool:
         people.refresh(conn)
         impressions = refresh_impressions(conn)
         ep = episodes.build_day(conn, day=baseline.get("day_key"))
-        threads = thread_model.assign_threads(conn)
+        # Lexical thread grouping only in the maintenance loop. Event progress is
+        # reviewed online inside dream (not by the local 2B).
+        threads = thread_model.assign_threads(conn, max_model_reviews=0)
         loops = thread_loops.sync_thread_loops(conn)
-        reviewed = episode_review.review_open(conn, limit=max(1, int(os.environ.get("EMOTIONCORE_REVIEW_LIMIT") or 10)))
         episodes.write_cards(conn, day=baseline.get("day_key"))
         lifecycle = close_episodes(conn)
         cons = consolidate.run(conn, mode="day_end")
-        dr = dream.run(conn)
+        dr = dream.run(
+            conn,
+            review_events=True,
+            event_limit=int(os.environ.get("EMOTIONCORE_DREAM_EVENT_LIMIT") or 12),
+        )
         summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
         patience.write(conn)
         purpose_seed.write(conn)
         handoff.write(conn)
         db.record_sleep(conn, day_key=dr["day_key"], reason="daily", rotated=False, farewell_sent=False,
                         details={"local_worker": True, "dream_id": dr.get("dream_id")})
-        log(f"daily done day={dr.get('day_key')} appraised={appraised.get('tried')} episodes={ep.get('episodes')} impressions={impressions} threads={threads} loops={loops} reviewed={reviewed} lifecycle={lifecycle} summary={bool(summary)}")
+        log(f"daily done day={dr.get('day_key')} appraised={appraised.get('tried')} episodes={ep.get('episodes')} impressions={impressions} threads={threads} loops={loops} dream_events={dr.get('events')} lifecycle={lifecycle} summary={bool(summary)}")
         return True
     except Exception as e:
         log(f"daily failed: {e}")
@@ -197,16 +202,11 @@ def cycle(db_path: str, *, appraise_limit: int = 5, review_limit: int = 2) -> No
             log(f"body refresh failed: {e}")
         try:
             built = episodes.build_day(conn)
-            threads = thread_model.assign_threads(conn)
+            threads = thread_model.assign_threads(conn, max_model_reviews=0)
             loops = thread_loops.sync_thread_loops(conn)
             log(f"episodes built={built.get('episodes', '?')} day={built.get('day', '?')} threads={threads} loops={loops}")
         except Exception as e:
             log(f"episodes failed: {e}")
-        try:
-            rev = episode_review.review_open(conn, limit=review_limit)
-            log(f"episode_review {rev}")
-        except Exception as e:
-            log(f"episode_review failed: {e}")
         for name, fn in (
             ("episodes.write_cards", lambda: episodes.write_cards(conn)),
             ("people.refresh", lambda: people.refresh(conn)),

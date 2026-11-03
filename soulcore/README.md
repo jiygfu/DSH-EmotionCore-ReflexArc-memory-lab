@@ -37,6 +37,7 @@ python -m soulcore recall --text "主人说明天要考试" --limit 5
 python -m soulcore shadow --text "主人说明天要考试"
 python -m soulcore dream --budget 8 --seed 7
 python -m soulcore dream --budget 8 --diary
+python -m soulcore dream --budget 8 --events   # 线上事件复盘（sleep/daily 默认开启）
 python -m soulcore p
 python -m soulcore person-context --id qq:<ownerQQ>
 python -m soulcore memory --mode overview
@@ -60,6 +61,10 @@ python -m soulcore episode-build
 python -m soulcore episodes
 python -m soulcore rotate-sessions --reason manual
 ```
+
+`dream --events` 读取 `data/dream-config.json`（示例 `config/dream.example.json`），
+使用线上 API；不会回落到本地 2B。`sleep`/`daily` 会先 `consolidate` 再
+`dream --events`，两者固定绑定。
 
 `memory` 的普通关键词搜索使用本地 `soulcore.db` 的 FTS/索引；不再依赖
 SurfCore 的 `recallFullMemory()`。`sync`/`export-surfcore` 只作为旧数据迁移工具。

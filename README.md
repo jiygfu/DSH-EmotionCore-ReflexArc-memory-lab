@@ -81,6 +81,40 @@ SnowLuma          本机已在用的 OneBot 实现
 
 扮演人格约 895 字，仍然保留；压缩主要来自工具 schema、通用脚手架、重复上下文和群历史，而不是削减人格。
 
+## 睡眠、做梦与记忆整理
+
+睡眠和记忆整理绑定在同一条整理链里：
+
+```text
+appraise → episodes/threads → consolidate → dream（含线上事件复盘）→ 日结/handoff
+```
+
+- **daily** 和 **sleep** 都会先做 `consolidate`，再做 `dream`，不会再出现“睡了但没整理”或“整理了但没睡”的分叉。
+- **自动 worker 执行 `daily_cycle`**：不告别、不轮换 QQ 会话；完整 `sleep` 仍可手动触发（含睡眠告别/会话轮换）。
+- `dream` 里的**事件复盘使用线上 API**，不再用本地 2B 判断事件是否结束。
+- 事件复盘会先用自带 `retrieval.search_memories` 检索相关旧记忆/联想，再看线程片段、未答问题/请求和收尾信号。
+- 线上模型只给 `resolved/ongoing/waiting/abandoned` 建议；本地规则会检查未答问题/请求、置信度和当前状态后才写回，不会让模型单独决定关闭。
+- 不重要刷屏/吹水：`consolidate` 和 dream 的 `chatter` 判断会把 `affect_weight` 置 0、`consolidation_state='ignored'`，原文仍保留在 `soulcore.db`，仍可被检索，但不参与情绪/P，也不再注入上下文。
+
+线上事件复盘配置：
+
+```text
+data/dream-config.json       # 或环境变量
+config/dream.example.json    # 示例
+```
+
+```json
+{
+  "provider": "api",
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "event_limit": 12
+}
+```
+
+API Key 缺失或线上失败时，事件复盘只会跳过，不会回落到本地 2B。日常 `code-v1` 打分仍可在本地完成。
+
 ## 快速开始
 
 ```powershell
@@ -97,7 +131,8 @@ curl http://127.0.0.1:8765/health
 # 4. 在 DSH 设置页启用 EmotionCoreAdapter / ReflexArc
 ```
 
-详细安装与国内网络说明见 [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md)。
+详细安装与国内网络说明见 [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md)；
+睡眠/做梦/自动整理见 [docs/STARTUP-SLEEP-ROUTE.md](docs/STARTUP-SLEEP-ROUTE.md)。
 
 ## 插件
 

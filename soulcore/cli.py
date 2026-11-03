@@ -889,6 +889,7 @@ def cmd_dream(args) -> int:
         budget=args.budget,
         seed=args.seed,
         write_diary=args.diary,
+        review_events=bool(getattr(args, "events", False)),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
@@ -919,12 +920,19 @@ def cmd_sleep(args) -> int:
     ep = episodes.build_day(conn, day=args.day)
     episode_cards = episodes.write_cards(conn, day=args.day)
     cons = consolidate.run(conn, mode=args.mode)
-    dr = dream.run(conn, day=args.day, budget=args.budget, seed=args.seed)
+    dr = dream.run(
+        conn, day=args.day, budget=args.budget, seed=args.seed,
+        review_events=True, event_limit=int(getattr(args, "event_limit", 12)),
+    )
     person_refresh = people.refresh(conn, day=dr["day_key"])
     person_cards = people.today_people(conn, day=dr["day_key"])
     cards = people_card.render_all(conn)  # 睡前刷新一人一档（M5）
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
-    surfcore_exported = surfcore_export.export_surfcore(conn)
+    try:
+        surfcore_exported = surfcore_export.export_surfcore(conn)
+    except Exception as exc:
+        # Historical SurfCore export is optional; never block OneBot sleep.
+        surfcore_exported = {"ok": False, "skipped": f"SurfCore export unavailable: {exc}"[:300]}
     farewell = sleep_farewell.maybe_send("sleep")
     rotated = session_rotation.rotate_all(reason="sleep")
     loops_cleaned = loop_maintain.maintain()
@@ -948,6 +956,7 @@ def cmd_sleep(args) -> int:
         "appraised": appraised.get("tried"),
         "sampled": dr["sampled"],
         "dream_id": dr["dream_id"],
+        "dream_events": dr.get("events"),
         "people_refresh": person_refresh,
         "person_cards": person_cards,
         "surfcore_export": surfcore_exported,
@@ -980,12 +989,16 @@ def cmd_daily(args) -> int:
     db.init_db(conn)
     baseline = daybook.ensure_day_baseline(conn)
     repaired = db.repair_identity_status(conn)
-    synced = inbox.sync_inbox(
-        conn,
-        surfcore_root=args.surfcore_root,
-        limit=args.sync_limit,
-        include_self=not args.no_self,
-    )
+    try:
+        synced = inbox.sync_inbox(
+            conn,
+            surfcore_root=args.surfcore_root,
+            limit=args.sync_limit,
+            include_self=not args.no_self,
+        )
+    except Exception as exc:
+        # OneBot-only installs have no SurfCore inbox; daily must still work.
+        synced = {"ok": False, "skipped": f"SurfCore inbox unavailable: {exc}"[:300]}
     appraised = None
     if not args.skip_appraise:
         appraised = appraise.appraise_pending(
@@ -999,9 +1012,15 @@ def cmd_daily(args) -> int:
     ep = episodes.build_day(conn, day=baseline.get("day_key"))
     episode_cards = episodes.write_cards(conn, day=baseline.get("day_key"))
     cons = consolidate.run(conn, mode="day_end")
-    dr = dream.run(conn, budget=args.budget, seed=args.seed)
+    dr = dream.run(
+        conn, budget=args.budget, seed=args.seed,
+        review_events=True, event_limit=int(getattr(args, "event_limit", 12)),
+    )
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
-    exported = surfcore_export.export_surfcore(conn)
+    try:
+        exported = surfcore_export.export_surfcore(conn)
+    except Exception as exc:
+        exported = {"ok": False, "skipped": f"SurfCore export unavailable: {exc}"[:300]}
     farewell = sleep_farewell.maybe_send("daily")
     rotated = session_rotation.rotate_all(reason="daily")
     patience_state = patience.write(conn)
@@ -1304,6 +1323,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--budget", type=int, default=12)
     s.add_argument("--seed", type=int, default=None)
     s.add_argument("--diary", action="store_true", help="also generate local diary + next-day plan")
+    s.add_argument("--events", action="store_true", help="run online dream event review")
     s.set_defaults(func=cmd_dream)
 
     s = sub.add_parser("p", help="compute P shadow (not injected)")

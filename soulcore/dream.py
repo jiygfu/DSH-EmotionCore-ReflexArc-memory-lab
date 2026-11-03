@@ -17,7 +17,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from . import db, diary, personality
+from . import db, diary, dream_events, personality
 
 
 def _day(value: str | None) -> str:
@@ -32,6 +32,9 @@ def run(
     seed: int | None = None,
     write_diary: bool = False,
     diary_model: str = db.MODEL,
+    review_events: bool = False,
+    event_limit: int = 12,
+    event_timeout: int | None = None,
 ) -> dict[str, Any]:
     d = _day(day)
     budget = max(1, int(budget))
@@ -101,6 +104,32 @@ def run(
         )
     personality.save_p(conn, p_result)
     conn.commit()
+
+    event_result = None
+    if review_events:
+        event_result = dream_events.review_events(
+            conn, limit=event_limit, timeout=event_timeout,
+        )
+        try:
+            details = {
+                "today": len(today), "random": len(picked), "seed": seed,
+                "events": event_result,
+            }
+            if int((event_result or {}).get("chatter") or 0) > 0:
+                # Chatter was just removed from affect/P; refresh the P shadow
+                # so the dream run records the post-cleanup state.
+                p_result = personality.compute_p(conn)
+                personality.save_p(conn, p_result)
+                details["p_after_chatter"] = p_result.get("p")
+            conn.execute(
+                "UPDATE dream_runs SET details_json=?, p_json=? WHERE id=?",
+                (json.dumps(details, ensure_ascii=False),
+                 json.dumps(p_result.get("p"), ensure_ascii=False), dream_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
     diary_result = None
     if write_diary:
         diary_result = diary.generate(
@@ -115,5 +144,6 @@ def run(
         "p": p_result["p"],
         "p_memory_count": p_result["memory_count"],
         "dream_id": dream_id,
+        "events": event_result,
         "diary": diary_result,
     }

@@ -24,13 +24,24 @@ INITIAL_COEFFICIENTS = {
 }
 
 APPRAISER = {
-    # Public default: same provider/model as the SurfCore/DSH host.
+    # Public default: same provider/model as the DSH host.
     # Local users override this in data/appraisal-config.json (Ollama).
     "provider": "api",
     "model": "deepseek-flash",
     "base_url": "https://api.deepseek.com",
     "api_key_env": "DEEPSEEK_API_KEY",
     "timeout_s": 300,
+}
+
+# Sleep "dream" event review. Deliberately online-only: local 2B is used for
+# appraisal/vision side work, not for deciding whether a long event ended.
+DREAM = {
+    "provider": "api",
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "timeout_s": 180,
+    "event_limit": 12,
 }
 
 # Day-end / shutdown consolidation.

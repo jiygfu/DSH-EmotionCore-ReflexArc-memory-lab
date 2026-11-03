@@ -1,0 +1,9 @@
+{
+  "provider": "api",
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "timeout_s": 180,
+  "event_limit": 12,
+  "note": "Online-only event review used by dream/sleep. Never point this at Ollama; local 2B is only for appraisal/vision."
+}
