@@ -23,7 +23,16 @@ const configSchema = {
   emotionCoreUrl: { type: 'str', default: '', group: 'EmotionCore', label: '本地 EmotionCore 地址', hint: '本地记忆/情绪服务的 HTTP 地址；留空则只做 QQ 本地适配，不注入记忆。' },
   timeoutMs: { type: 'int', default: 4000, min: 100, max: 10000, group: 'EmotionCore', label: '本地查询超时（ms）', hint: 'EmotionCore 查询超时时间；超时静默跳过，不阻塞聊天。' },
   injectContext: { type: 'bool', default: true, group: 'EmotionCore', label: '注入本地记忆摘要', hint: '把 EmotionCore 返回的短摘要注入本轮提示；不注入完整记忆正文。' },
-  injectInstructions: { type: 'bool', default: true, group: '本地技能', label: '注入本地动作说明', hint: '每轮只注入几行 ec 动作说明，不注册几十个 QQ schema。' },
+  injectContextMode: {
+    type: 'enum', default: 'first_wake', group: 'EmotionCore', label: '注入时机',
+    options: [
+      { value: 'first_wake', label: '首次唤醒/每天一段（推荐）' },
+      { value: 'on_change', label: '摘要变化时' },
+      { value: 'every_turn', label: '每轮（兼容旧行为）' },
+    ],
+    hint: '首次唤醒后，后续靠会话历史和 ec recall；不再每轮重复整份 L5。',
+  },
+  injectInstructions: { type: 'bool', default: true, group: '本地技能', label: '注入本地动作说明', hint: '默认只在首次唤醒注入几行 ec 动作说明；every_turn 时才每轮重复。' },
   recordTurn: { type: 'bool', default: true, group: 'EmotionCore', label: '回写本轮对话', hint: '发送成功后把用户/助手文本写入 EmotionCore；失败静默。' },
   identityFile: { type: 'str', default: '', group: '本地技能', label: '跨群身份缓存文件', hint: '留空 = <dsh-onebot 数据目录>/emotioncore-identity.json。' },
   imageRoots: { type: 'group', default: [], group: '本地技能', label: '允许发图的目录', hint: '绝对路径白名单；留空只允许 dsh-onebot 数据目录和系统临时目录。' },
@@ -71,6 +80,24 @@ function sharedOf(bot) {
   if (bot?.shared && typeof bot.shared === 'object') return bot.shared;
   if (!bot._emotionCoreShared) bot._emotionCoreShared = {};
   return bot._emotionCoreShared;
+}
+
+function contextCacheOf(bot) {
+  const shared = sharedOf(bot);
+  if (!(shared.emotionCoreContextCache instanceof Map)) shared.emotionCoreContextCache = new Map();
+  return shared.emotionCoreContextCache;
+}
+
+function localDay() {
+  return new Date().toLocaleDateString('en-CA');
+}
+
+function stableContextKey(text) {
+  return String(text || '')
+    .replace(/【此刻身体状态[\s\S]*?(?=\n\n|$)/g, '')
+    .replace(/【耐心】[^\n]*\n?/g, '')
+    .replace(/【此刻的念头[\s\S]*?(?=\n\n|$)/g, '')
+    .trim();
 }
 
 function traceAdapter(bot, msg, extra) {
@@ -320,7 +347,7 @@ async function postTurn(bot, rec, pending) {
 
 async function fetchContext(bot, ev) {
   const base = String(bot?.cfg?.emotionCoreUrl || process.env.EMOTIONCORE_URL || '').trim();
-  if (!base) return '';
+  if (!base) return { text: '', firstWake: false };
   const url = base.replace(/\/+$/, '') + '/context';
   const timeout = Math.max(100, Math.min(10000, Number(bot?.cfg?.timeoutMs) || 1500));
   const ac = new AbortController();
@@ -341,11 +368,14 @@ async function fetchContext(bot, ev) {
       }),
       signal: ac.signal,
     });
-    if (!res.ok) return '';
+    if (!res.ok) return { text: '', firstWake: false };
     const data = await res.json();
-    return truncate(data?.context || data?.summary || '', 1800);
+    return {
+      text: truncate(data?.context || data?.summary || '', 1800),
+      firstWake: data?.first_wake === true,
+    };
   } catch {
-    return '';
+    return { text: '', firstWake: false };
   } finally {
     clearTimeout(timer);
   }
@@ -402,7 +432,13 @@ export default {
       onBefore('before-turn', async (ev) => {
       traceAdapter(bot, 'before-turn', { chatKey: ev.chatKey, text: String(ev.text || '').slice(0, 80), hasOn: typeof bot.on });
       try {
-        if (bot.cfg.injectInstructions !== false) ev.hint.push(localInstructions(String(bot.toolPrefix || DEFAULT_PREFIX)));
+        const mode = String(bot.cfg.injectContextMode || 'first_wake');
+        const cacheKey = `${String(ev.chatKey || '')}|${localDay()}`;
+        const cache = contextCacheOf(bot);
+        const firstForChat = !cache.has(cacheKey);
+        if (bot.cfg.injectInstructions !== false && (mode === 'every_turn' || firstForChat)) {
+          ev.hint.push(localInstructions(String(bot.toolPrefix || DEFAULT_PREFIX)));
+        }
         const who = ev.sender || {};
         if (who.qq) {
           const shared = sharedOf(bot);
@@ -417,9 +453,20 @@ export default {
         const pendingMap = pendingOf();
         pendingMap.set(String(ev.chatKey || ''), { chatKey: ev.chatKey, isGroup: ev.isGroup, groupId: ev.groupId, sender: ev.sender, text: ev.text });
         if (bot.cfg.injectContext !== false && (bot.cfg.emotionCoreUrl || process.env.EMOTIONCORE_URL)) {
-          const ctx = await fetchContext(bot, ev);
-          traceAdapter(bot, 'context-result', { chars: ctx.length });
-          if (ctx) ev.hint.push(`[EmotionCore] ${ctx}`);
+          const shouldFetch = mode === 'every_turn' || mode === 'on_change' || firstForChat;
+          if (shouldFetch) {
+            const ctx = await fetchContext(bot, ev);
+            const text = String(ctx.text || '');
+            const stable = stableContextKey(text);
+            const hash = stable.length + ':' + stable.slice(0, 80) + ':' + stable.slice(-80);
+            const prev = cache.get(cacheKey) || {};
+            const changed = !prev.hash || prev.hash !== hash;
+            const inject = mode === 'every_turn' || (mode === 'first_wake' ? firstForChat : changed);
+            traceAdapter(bot, 'context-result', { chars: text.length, mode, firstForChat, changed, inject });
+            if (text && inject) ev.hint.push(`[EmotionCore] ${text}`);
+            cache.set(cacheKey, { hash, at: Date.now(), firstWake: ctx.firstWake === true });
+          }
+          if (!cache.has(cacheKey)) cache.set(cacheKey, { at: Date.now(), firstWake: false });
         }
       } catch (e) {
         bot.log?.warn?.(`[EmotionCoreAdapter] before-turn: ${e.message}`);

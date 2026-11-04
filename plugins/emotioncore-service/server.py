@@ -480,7 +480,11 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
             if p_state:
                 parts.append("【EmotionCore 潜意识状态（背景，不主动解释）】\n" + p_state)
             if body_hint:
-                parts.append("【此刻身体状态（临时，只影响这一轮语气）】\n" + body_hint)
+                hint = str(body_hint).strip()
+                if hint.startswith("【此刻身体状态"):
+                    parts.append(hint)
+                else:
+                    parts.append("【此刻身体状态（临时，只影响这一轮语气）】\n" + hint)
             if desire_hint:
                 parts.append("【此刻的念头（临时，不主动解释）】\n" + desire_hint)
             if patience_hint:

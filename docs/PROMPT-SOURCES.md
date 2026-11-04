@@ -22,6 +22,24 @@
 - `server.CONTINUITY` 从防御性措辞改为正向定位。
 - `_first_wake(chat_key)` 从“全局一天一次”改为“每个 chat/day 一次”。
 
+## L5 注入策略
+
+`emotioncore-adapter` 新增：
+
+```text
+injectContextMode = first_wake | on_change | every_turn
+默认 first_wake
+```
+
+- `first_wake`：每个 chat/day 只 fetch + inject 一次；
+- `on_change`：每轮 fetch，但只按稳定摘要 hash 变化注入；身体/耐心/念头不参与 hash；
+- `every_turn`：兼容旧行为；
+- 本地动作说明 `[本地QQ能力]` 默认也只注入一次；`every_turn` 才重复；
+- 首次注入的 L5 会留在会话历史里，后续用 `ec recall`。
+
+QQ 会话实测：49 次 `[EmotionCore]` 注入，约 55k 字符，平均 1.1k/次。改成
+`first_wake` 后，正常情况下只保留 1 次。
+
 ## 仍然存在的边界
 
 - 同一 chat 在同一天内重建 session，目前没有 session id 可用于再次触发 handoff；下一步应从 onebot event 传入 session id，或在 `/reset` 时清理 wake 标记。
