@@ -27,6 +27,7 @@ experiments/results/
 
 # private human-review exports (personal chat content; local only)
 reports/unfinished-events-*
+reports/event-stream-shadow-*
 
 # third-party plugin source used only for inspection
 external/
