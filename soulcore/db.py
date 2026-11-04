@@ -527,6 +527,19 @@ def init_db(conn: sqlite3.Connection) -> None:
       reason TEXT,
       reviewed_at TEXT NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS event_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      chat_key TEXT,
+      captured_at TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      pressure_tokens REAL,
+      context_window REAL,
+      ratio REAL,
+      event_count INTEGER NOT NULL DEFAULT 0,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )""")
     conn.executescript(SCHEMA)
     _ensure_column(conn, "memories", "affect_weight", "REAL DEFAULT 1.0")
     _ensure_column(conn, "memories", "consolidation_state", "TEXT DEFAULT 'none'")

@@ -43,6 +43,7 @@ QQ 消息
 
 - [启动链 / 睡眠整理](STARTUP-SLEEP-ROUTE.md)
 - [事件流与上下文压力计划](EVENT-STREAM-PLAN.md)
+- [Pre-compaction 事件快照契约](EVENT-SNAPSHOT-CONTRACT.md)
 - [分层记忆调用记录](MEMORY-LAYER-CALLS.md)
 - [QQ 反射弧触发与鱼群记录](QQ-REFLEX-TRIGGER.md)
 - [层级地图](LAYERS.md)
