@@ -146,10 +146,13 @@ export function classifyIncoming(msg) {
     const id = seg.id ?? seg.data?.id;
     if (id != null) forwardIds.push(String(id));
   }
+  const segImageCount = segments.filter((s) => /^(image|face|mface)$/.test(String(s?.type ?? ''))).length;
   return {
     hasForward,
     forwardId: m.forwardId ? String(m.forwardId) : (forwardIds[0] ?? textForwardId),
-    imageCount: media.filter((x) => /image|face|mface/.test(String(x?.type ?? ''))).length || (m.imageCount ?? 0),
+    // kernel 归一化后的 media 项没有 `type` 字段（只有 url/file/isSticker），
+    // 所以先按条数算，再退回原始分段的类型计数。
+    imageCount: media.length || segImageCount || Number(m.imageCount) || 0,
     quoteId: m.quote?.id ? String(m.quote.id) : (m.replyTo ? String(m.replyTo) : ''),
     links: links.slice(0, 2),
     atSelf: Boolean(m.atSelf),

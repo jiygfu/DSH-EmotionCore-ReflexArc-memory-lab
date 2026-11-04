@@ -11,7 +11,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { detectDiceIntent, rollDice, classifyIncoming } from './reflex-core.js';
+import { execFile } from 'node:child_process';
+import { detectDiceIntent, rollDice, classifyIncoming, findDiceClaimMismatch, inQuietHours, screenClaim } from './reflex-core.js';
+import { runDiceCommand } from './dice-command.js';
 import {
   activityPatterns, detectActivityAction, detectFishTags, highChanceFor, highContextScore,
   isContinueLike, isManagedGroup, isQuestion, probabilityHit, scoreRelated, splitList,
@@ -24,10 +26,81 @@ const configSchema = {
   enabled: { type: 'bool', default: true, group: '反射弧', label: '启用反射弧', hint: '本地骰子/提示；不注册模型工具。' },
   maxDice: { type: 'int', default: 100, min: 2, max: 10000, group: '反射弧', label: '骰子上限', hint: '单次骰子的面数上限，防止异常大数。' },
   maxCount: { type: 'int', default: 10, min: 1, max: 20, group: '反射弧', label: '骰子个数上限', hint: '一次最多掷几个骰子。' },
+
+  // 骰子指令通道（本地直回，不叫模型；随机数模型看不到，也没法照着编）
+  diceCommand: {
+    type: 'bool', default: true, group: '反射弧', label: '骰子指令（本地直回）',
+    hint: '.r 3d6 / .ra 侦查60 这类指令由本地直接回，零 token、不唤醒模型；关掉就退回"本地掷骰→把点数塞给模型让模型报"的老路子。',
+  },
+  diceCommandDefault: {
+    type: 'str', default: '1d6', group: '反射弧', label: '默认骰（只打 .r）',
+    hint: '只打 ".r" / "。r" 时掷什么；.ra 检定固定用 1d100。',
+  },
+  diceCommandMaxDice: { type: 'int', default: 20, min: 1, max: 20, group: '反射弧', label: '指令：单次最多骰数' },
+  diceCommandMaxSides: { type: 'int', default: 1000, min: 2, max: 1000, group: '反射弧', label: '指令：面数上限' },
+  diceCommandMaxRepeat: { type: 'int', default: 10, min: 1, max: 10, group: '反射弧', label: '指令：3#1d6 最多重复' },
+  diceIntent: {
+    type: 'bool', default: true, group: '反射弧', label: '骰子意图提示',
+    hint: '口语里的「掷个骰子」识别后以 [反射弧/骰] 一行注入本轮（数字由模型转述，会花这一轮的钱）。'
+      + '关掉 = 只有 .r / .ra 指令通道能掷。',
+  },
+  diceReceipt: {
+    type: 'bool', default: true, group: '反射弧', label: '骰子回执（防改数字）',
+    hint: '模型报的骰子数字和本地掷的不一致时，下一轮用 【反射弧回执】 点出来。',
+  },
+  impressionEnabled: {
+    type: 'bool', default: true, group: '反射弧', label: '首次接触人物印象',
+    hint: '当天第一次和某人说话时，向 EmotionCore 取一句人物印象注入本轮（每人每天一次）。关掉后不再请求 8765。',
+  },
   emotionCoreUrl: { type: 'str', default: 'http://127.0.0.1:8765', group: '反射弧', label: 'EmotionCore 地址', hint: '人物印象、长期活动判断共用；留空关闭对应联动。' },
   impressionTimeoutMs: { type: 'int', default: 1500, min: 100, max: 10000, group: '反射弧', label: '人物印象超时（ms）' },
   visionModel: { type: 'str', default: 'huihui_ai/qwen3-vl-abliterated:2b-instruct-q4_K_M', group: '反射弧', label: '本地视觉模型' },
+  localVision: {
+    type: 'bool', default: false, group: '反射弧', label: '本地视觉描述（慢）',
+    hint: '把图丢给本地 qwen3-vl 出 120 字描述：实测每张约 24 秒（CPU 2B），会明显拖慢回复，默认关。'
+      + '只有图片没有 url（QQ 只给本地文件）时这项本来也不会触发。',
+  },
   visionTimeoutMs: { type: 'int', default: 20000, min: 1000, max: 120000, group: '反射弧', label: '图片理解超时（ms）' },
+
+  // ── 本地粗看：过长/过大的截图先在本地 OCR，只把文字交给模型（省 token）──
+  coarseVision: {
+    type: 'bool', default: true, group: '反射弧/粗看', label: '长图本地粗看',
+    hint: '收到的截图过高/过大时先在本地 OCR 出文字，只把文字交给模型，原图不发送。'
+      + '省一半左右 token（1080×1920 截图 ≈ 986 → 400–600），更重要的是长图压缩后模型本来就看不清。'
+      + 'OCR 不可用时自动退回原图，不会让模型看不到内容。',
+  },
+  coarseVisionKeepOriginal: {
+    type: 'bool', default: false, group: '反射弧/粗看', label: '粗看后仍发原图',
+    hint: '打开 = 不省 token，只额外多一段 OCR 文本（调试用）。',
+  },
+  coarseLookBack: {
+    type: 'bool', default: true, group: '反射弧/粗看', label: '模型可调 ec look 取图',
+    hint: '粗看之后模型想细看时，可以用 mcp__qq__ec(action="look") 把 QQ 默认画质那张回灌进下一轮'
+      + '（多花 200–1000 token）。关掉 = 只给 OCR 文字，永远不再给图。',
+  },
+  coarseVisionLongRatio: {
+    type: 'int', default: 250, min: 120, max: 1000, group: '反射弧/粗看', label: '长图判定（高/宽 ×100）',
+    hint: '250 = 高是宽的 2.5 倍以上算长图（聊天记录截图、网页长图）。',
+  },
+  coarseVisionPixels: {
+    type: 'int', default: 4000000, min: 100000, max: 64000000, group: '反射弧/粗看', label: '像素上限（超过按大图处理）',
+    hint: '宽×高超过这个值也走粗看；0 = 只看长宽比。',
+  },
+  coarseVisionMaxChars: {
+    type: 'int', default: 800, min: 80, max: 4000, group: '反射弧/粗看', label: '粗看文本上限（字）',
+    hint: 'OCR 结果截断长度；长图全量文字通常上万字，截断后每轮只多 ~500 tokens。',
+  },
+  coarseVisionTimeoutMs: {
+    type: 'int', default: 60000, min: 2000, max: 300000, group: '反射弧/粗看', label: '粗看超时（ms）',
+  },
+  coarseVisionMaxTiles: {
+    type: 'int', default: 4, min: 1, max: 16, group: '反射弧/粗看', label: '最多切几块 OCR',
+    hint: '每块 1600px 高、约 3 秒；4 块 ≈ 13 秒，超出的下半部分不读（长图通常前几屏才是重点）。',
+  },
+  coarseVisionPython: {
+    type: 'str', default: '', group: '反射弧/粗看', label: 'OCR Python 路径',
+    hint: '留空自动找：DSH 运行时 python → 系统 python。需要该解释器装了 rapidocr-onnxruntime。',
+  },
   memoryLabEnabled: { type: 'bool', default: false, group: '反射弧', label: '启用 memory-lab 联想（实验）', hint: '默认关闭；只读查询，失败不影响回复。' },
   memoryLabUrl: { type: 'str', default: 'http://127.0.0.1:8766', group: '反射弧', label: 'memory-lab 地址' },
   memoryLabTimeoutMs: { type: 'int', default: 250, min: 100, max: 3000, group: '反射弧', label: 'memory-lab 超时（ms）' },
@@ -50,6 +123,15 @@ const configSchema = {
   relatedKeywords: {
     type: 'str', default: '', group: '触发/总览', label: '额外相关词（逗号分隔，可留空）',
     hint: '除了本机别名，出现这些词也算「在说你」。适合「雪风」「小鱼」这类只有你们知道的称呼；别填「你」这种泛词。',
+  },
+  quietHours: {
+    type: 'str', default: '', group: '触发/总览', label: '夜间静默时段（可留空）',
+    hint: '例 01:00-08:00；留空 = 不静默。静默期内只挡「主动接话」（相关/随机/高概率/长期活动自动开始），'
+      + '被 @、引用、唤醒词叫到时照常回，骰子这类指令也照常。',
+  },
+  quietHoursEnabled: {
+    type: 'bool', default: false, group: '触发/总览', label: '启用夜间静默',
+    hint: '勾上才按上面的时段静默；不勾 = 行为和以前完全一样。',
   },
 
   relatedEnabled: {
@@ -231,9 +313,58 @@ export default {
       return;
     }
 
-    const onBefore = (stage, fn) => (typeof bot.on === 'function'
-      ? bot.on(stage, fn)
-      : bot.pipeline?.use?.(stage, fn));
+    const onBefore = (stage, fn, opts) => (typeof bot.on === 'function'
+      ? bot.on(stage, fn, opts)
+      : bot.pipeline?.use?.(stage, fn, opts));
+
+    // ── 骰子指令通道（.r / .ra）：本地直接回，零 token，模型看不到随机数 ──
+    // 移植自 surfcore 的 dice-command：随机数一旦进了模型上下文，它就有机会照着编；
+    // 命令通道直接出结果 + 本轮 stopped，模型根本不知道这次掷了什么。
+    const lastRoll = new Map();   // chatKey -> { expr, total, at }
+    const diceMismatch = new Map(); // chatKey -> { expected, seen }
+
+    /** "01:00-08:00" → {startHour, endHour}；空/格式不对 → null（= 不静默）。 */
+    function parseQuietHours(spec) {
+      const m = String(spec || '').trim().match(/^(\d{1,2})(?::\d{2})?\s*[-~到]\s*(\d{1,2})(?::\d{2})?$/);
+      if (!m) return null;
+      const startHour = Math.min(23, Math.max(0, Number(m[1])));
+      const endHour = Math.min(23, Math.max(0, Number(m[2])));
+      if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || startHour === endHour) return null;
+      return { startHour, endHour };
+    }
+
+    function diceOptions() {
+      const c = bot?.cfg || {};
+      return {
+        enabled: c.diceCommand !== false, // 缺键按默认开
+        judgeDefault: '1d100',
+        diceDefault: String(c.diceCommandDefault || '1d6'),
+        maxDice: Number(c.diceCommandMaxDice) || 20,
+        maxSides: Number(c.diceCommandMaxSides) || 1000,
+        maxRepeat: Number(c.diceCommandMaxRepeat) || 10,
+      };
+    }
+
+    if (typeof bot.on === 'function') {
+      // order 10：排在斜杠命令（5）之后、门禁之前；私聊群聊都认
+      bot.on('intercept', async (ev) => {
+        try {
+          if (ev?.stopped) return;
+          const opts = diceOptions();
+          if (opts.enabled !== true) return;
+          const cmd = runDiceCommand(ev.text, opts);
+          if (!cmd) return;
+          await bot.deliver(ev.chatKey, cmd.reply);
+          ev.stopped = true;
+          ev.stopReason = 'reflex-arc:dice';
+          const key = String(ev.chatKey || '');
+          if (key && cmd.expr) lastRoll.set(key, { expr: cmd.expr, total: cmd.total, at: Date.now() });
+          bot.log?.info?.(`[ReflexArc] 骰子指令 ${ev.chatKey}：${cmd.reply}`);
+        } catch (e) {
+          bot.log?.warn?.(`[ReflexArc] 骰子指令失败: ${e.message}`);
+        }
+      }, { order: 10 });
+    }
     function stateFile() {
       return path.join(bot?.core?.dataDir || bot?.dataDir || process.cwd(), 'state', 'reflex-impressions.json');
     }
@@ -967,6 +1098,16 @@ export default {
       }
 
       // ── 普通模式：相关 > 高概率 > 随机（每轮最多一个）──
+      // 夜间静默只挡主动接话；上面 alreadyWoken（@/引用/关键词）已经提前 return，不受影响。
+      const quiet = cfg.quietHoursEnabled === true ? parseQuietHours(cfg.quietHours) : null;
+      if (quiet && inQuietHours(now, quiet)) {
+        pushEvent({
+          ts: nowIso(), groupId: gid, qq: String(ev.sender?.qq ?? ''), preview,
+          mode: 'none', action: 'skip', reason: 'quiet-hours',
+        });
+        return;
+      }
+
       let decision = null;
       if (cfg.relatedEnabled === true) {
         const rel = scoreRelated(text, {
@@ -1045,6 +1186,12 @@ export default {
     const offAfterSend = bot.onAfterSend?.((out) => {
       try {
         const target = String(out?.target || '');
+        // 模型自己报的骰子数字和本地掷的不一致 → 记下来，下一轮提醒（本地为准）
+        const roll = target ? lastRoll.get(target) : null;
+        if (roll && out?.text) {
+          const mm = findDiceClaimMismatch(`${roll.expr} = ${roll.total}`, String(out.text));
+          if (mm) diceMismatch.set(target, mm);
+        }
         const m = target.match(/^group:(\d+)$/);
         if (!m) return;
         const g = groupState(m[1]);
@@ -1075,6 +1222,8 @@ export default {
     }
 
     async function analyzeOneImage(ev) {
+      // 实测本地 qwen3-vl 2B 一张图约 24 秒（CPU），默认关；要开请在控制台打开 localVision。
+      if (bot?.cfg?.localVision !== true) return;
       const images = Array.isArray(ev?.images) ? ev.images : [];
       const first = images.find((x) => x && !x.isSticker && readImageUrl(x));
       if (!first) return;
@@ -1118,6 +1267,237 @@ export default {
       }
     }
 
+    // ── 本地粗看：过长/过大的截图先本地 OCR，只把文字交给模型 ──────────────
+    // 运行顺序很关键：本钩子必须排在 kernel:context（order 50）之后，否则 ev.imagePaths
+    // 还没被内核填好，插件拿不到图。reflex-arc 自己的 order 是 36，所以这里显式写 60。
+    const COARSE_OCR_SCRIPT = [
+      'import sys, json',
+      'try:',
+      '    from PIL import Image',
+      '    from rapidocr_onnxruntime import RapidOCR',
+      'except Exception as e:',
+      '    print(json.dumps({"ok": False, "error": "deps: %s" % e}))',
+      '    raise SystemExit(0)',
+      'import numpy as np',
+      'path = sys.argv[1]',
+      'try:',
+      '    im = Image.open(path).convert("RGB")',
+      'except Exception as e:',
+      '    print(json.dumps({"ok": False, "error": "open: %s" % e}))',
+      '    raise SystemExit(0)',
+      'w, h = im.size',
+      'max_tiles = int(sys.argv[2]) if len(sys.argv) > 2 else 4',
+      'tile_h, overlap, max_w = 1600, 160, 1600',
+      'engine = RapidOCR()',
+      'lines, prev, tiles, y = [], [], 0, 0',
+      'while y < h and tiles < max_tiles:',
+      '    tile = im.crop((0, y, w, min(h, y + tile_h)))',
+      '    if tile.width > max_w:',
+      '        r = max_w / tile.width',
+      '        tile = tile.resize((max_w, max(1, int(tile.height * r))))',
+      '    res, _ = engine(np.array(tile))',
+      '    for item in (res or []):',
+      '        t = str(item[1]).strip()',
+      '        if t and t not in prev:',
+      '            lines.append(t)',
+      '            prev = (prev + [t])[-3:]',
+      '    tiles += 1',
+      '    if y + tile_h >= h:',
+      '        break',
+      '    y += tile_h - overlap',
+      'print(json.dumps({"ok": True, "width": w, "height": h, "tiles": tiles, "text": "\\n".join(lines)}))',
+    ].join('\n');
+
+    /** 读文件头（不解码整图）。 */
+    function readHead(file, bytes = 65536) {
+      const fd = fs.openSync(file, 'r');
+      try {
+        const buf = Buffer.alloc(bytes);
+        const n = fs.readSync(fd, buf, 0, bytes, 0);
+        return buf.subarray(0, n);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+
+    /** 从文件头拿宽高：PNG / GIF / WebP / JPEG。拿不到返回 null。 */
+    function readImageSize(buf) {
+      try {
+        if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) {
+          return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+        }
+        if (buf.length > 10 && buf.toString('ascii', 0, 3) === 'GIF') {
+          return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+        }
+        if (buf.length > 30 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+          const kind = buf.toString('ascii', 12, 16);
+          if (kind === 'VP8X') return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+          if (kind === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+          if (kind === 'VP8L') {
+            const b = buf.readUInt32LE(21);
+            return { width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 };
+          }
+        }
+        if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+          let i = 2;
+          while (i + 9 < buf.length) {
+            if (buf[i] !== 0xff) { i += 1; continue; }
+            const marker = buf[i + 1];
+            if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) { i += 2; continue; }
+            const len = buf.readUInt16BE(i + 2);
+            if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+              return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+            }
+            i += 2 + len;
+          }
+        }
+      } catch { /* 头不完整 → 当未知 */ }
+      return null;
+    }
+
+    function ocrPython() {
+      const configured = String(bot?.cfg?.coarseVisionPython || '').trim();
+      if (configured) return configured;
+      const fromEnv = String(process.env.SOULCORE_PYTHON || process.env.DSH_PYTHON || '').trim();
+      if (fromEnv) return fromEnv;
+      const runtime = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-runtimes',
+        'dsh-primary-runtime', 'dependencies', 'python', 'python.exe');
+      if (runtime && fs.existsSync(runtime)) return runtime;
+      return 'python';
+    }
+
+    /** 跑本地 OCR。任何时候都 resolve，失败带 error，绝不拖死这一轮。 */
+    function runOcr(file, timeoutMs, maxTiles) {
+      return new Promise((resolve) => {
+        execFile(
+          ocrPython(),
+          ['-c', COARSE_OCR_SCRIPT, file, String(maxTiles)],
+          { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+          (error, stdout) => {
+            const raw = String(stdout || '').trim();
+            if (!raw) return resolve({ ok: false, error: error ? String(error.message || error) : '无输出' });
+            try {
+              resolve(JSON.parse(raw));
+            } catch {
+              resolve({ ok: false, error: 'OCR 输出不是 JSON' });
+            }
+          },
+        );
+      });
+    }
+
+    // 粗看摘掉的那张图（QQ 默认画质，不是原图）留个路径；模型要"看一眼"时本地回灌，
+    // 不用让主人重发，也不额外调用任何外部服务。
+    const pendingLook = new Map(); // chatKey -> { path, mediaType, at }
+    const LOOK_TTL_MS = 10 * 60 * 1000;
+
+    function rememberLook(chatKey, file, mediaType) {
+      const key = String(chatKey || '').trim();
+      if (!key || !file) return;
+      pendingLook.set(key, { path: file, mediaType: mediaType || 'image/jpeg', at: Date.now() });
+      if (pendingLook.size > 50) {
+        for (const [k, v] of pendingLook) {
+          if (Date.now() - v.at > LOOK_TTL_MS) pendingLook.delete(k);
+        }
+      }
+    }
+
+    /**
+     * 把上次粗看摘掉的图以图片块回灌到下一轮（内核 dsh 驱动直接 prompt）。
+     * 返回 { ok, queued } 或 { ok:false, error }。供 ec 的 look 动作调用。
+     */
+    async function lookAtImage(chatKey, note) {
+      const key = String(chatKey || '').trim();
+      if (bot?.cfg?.coarseLookBack === false) return { ok: false, error: '取原图功能已关闭（反射弧 → 长图粗看）' };
+      const rec = pendingLook.get(key);
+      if (!rec) return { ok: false, error: '没有待看的图（这轮没有粗看，或已经看过/过期）' };
+      if (Date.now() - rec.at > LOOK_TTL_MS) {
+        pendingLook.delete(key);
+        return { ok: false, error: '待看的图已过期（超过 10 分钟）' };
+      }
+      let buf = null;
+      try {
+        buf = fs.readFileSync(rec.path);
+      } catch (e) {
+        pendingLook.delete(key);
+        return { ok: false, error: `图已不在：${e.message}` };
+      }
+      const dsh = bot?.dsh;
+      if (!dsh || typeof dsh.ensureSession !== 'function' || typeof dsh.prompt !== 'function') {
+        return { ok: false, error: '内核不支持回灌图片' };
+      }
+      const sid = await dsh.ensureSession(key);
+      pendingLook.delete(key);
+      const head = '（反射弧回灌）这是上一张图的 QQ 默认画质版本，直接看图即可，不用复述"收到"。';
+      await dsh.prompt(sid, note ? `${head}\n${note}` : head, [{
+        mediaType: rec.mediaType || 'image/jpeg',
+        data: buf.toString('base64'),
+        name: 'qq-image',
+      }]);
+      return { ok: true, queued: true, bytes: buf.length };
+    }
+
+    // 暴露给其它插件（ec 的 look 动作）：功能仍归反射弧所有。
+    try {
+      if (bot?.shared) bot.shared.lookAtImage = lookAtImage;
+    } catch { /* shared 只读时忽略 */ }
+
+    async function coarseLookLongImages(ev) {
+      const cs = bot?.cfg || {};
+      // 只有显式关掉才关：老配置里没有这个键时按 schema 默认（开）走。
+      if (cs.coarseVision === false) return;
+      const parts = Array.isArray(ev?.imageParts) ? ev.imageParts : [];
+      const paths = Array.isArray(ev?.imagePaths) ? ev.imagePaths : [];
+      if (!parts.length || !paths.length) return;
+      const ratio = Math.max(120, Number(cs.coarseVisionLongRatio) || 250) / 100;
+      const maxPixels = Math.max(0, Number(cs.coarseVisionPixels) || 0);
+      const maxChars = Math.max(80, Math.min(4000, Number(cs.coarseVisionMaxChars) || 800));
+      const timeout = Math.max(2000, Number(cs.coarseVisionTimeoutMs) || 60000);
+      const maxTiles = Math.max(1, Math.min(16, Number(cs.coarseVisionMaxTiles) || 4));
+      const keep = cs.coarseVisionKeepOriginal === true;
+      const drop = new Set();
+      const notes = [];
+      for (let i = 0; i < paths.length; i += 1) {
+        if (!parts[i]) continue;
+        const file = String(paths[i] || '');
+        if (!file) continue;
+        let size = 0;
+        let head = null;
+        try {
+          size = fs.statSync(file).size;
+          head = readHead(file);
+        } catch {
+          continue;
+        }
+        const dims = readImageSize(head);
+        if (!dims?.width || !dims?.height) continue;
+        const { width, height } = dims;
+        const long = height / width >= ratio;
+        const huge = maxPixels > 0 && width * height > maxPixels;
+        if (!long && !huge) continue;
+        const res = await runOcr(file, timeout, maxTiles);
+        const text = String(res?.text || '').trim();
+        if (!res?.ok || !text) {
+          bot.log?.warn?.(`[ReflexArc] 粗看跳过 ${width}x${height}：${res?.error || 'OCR 无结果'}（保留原图）`);
+          continue;
+        }
+        const clipped = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, maxChars).trim();
+        notes.push(`【反射弧/粗看】${width}×${height}（${Math.max(1, Math.round(size / 1024))}KB）本地 OCR 只读了文字：\n${clipped}`);
+        if (!keep) drop.add(i);
+      }
+      if (!notes.length) return;
+      const chatKey = String(ev?.chatKey || (ev?.groupId ? `group:${ev.groupId}` : ''));
+      ev.hint.push(`${notes.join('\n---\n')}\n（这是本地 OCR 粗看，不是完整画面；要看图就说一声，直接调用 mcp__qq__ec(action="look") 调出这张图，不用让主人重发。）`);
+      if (drop.size) {
+        ev.imageParts = parts.filter((_, i) => !drop.has(i));
+        ev._scratch = ev._scratch || Object.create(null);
+        ev._scratch['reflex-arc:coarse'] = drop.size;
+        const first = [...drop][0];
+        rememberLook(chatKey, paths[first], parts[first]?.mediaType);
+      }
+      bot.log?.info?.(`[ReflexArc] 粗看 ${notes.length} 张长图（省掉原图 ${drop.size} 张）`);
+    }
+
     async function injectMemoryLabHint(ev) {
       if (bot?.cfg?.memoryLabEnabled !== true) return;
       const text = String(ev?.text || '').trim();
@@ -1134,6 +1514,12 @@ export default {
         const data = await res.json();
         const item = Array.isArray(data?.items) ? data.items[0] : null;
         if (!item?.text) return;
+        // 外部记忆文本进 hint 前先过一道祈使/注入筛选（surfcore screenClaim 的用法）
+        const scr = screenClaim(item.text);
+        if (!scr.ok) {
+          bot.log?.warn?.(`[ReflexArc] memory-lab 文本被筛掉（${scr.reason}）`);
+          return;
+        }
         ev.hint.push(`[记忆联想·实验] ${String(item.text).slice(0, 160)}`);
         ev._scratch = ev._scratch || Object.create(null);
         ev._scratch['reflex-arc:memoryLab'] = true;
@@ -1186,7 +1572,7 @@ export default {
       try {
         const maxDice = Number(bot.cfg.maxDice) || 100;
         const maxCount = Number(bot.cfg.maxCount) || 10;
-        const r = parseDice(ev.text, maxDice, maxCount);
+        const r = bot.cfg.diceIntent === false ? null : parseDice(ev.text, maxDice, maxCount);
         if (r) {
           const body = r.count === 1
             ? `[反射弧/骰] d${r.sides} = ${r.total}`
@@ -1195,6 +1581,19 @@ export default {
           ev._scratch = ev._scratch || Object.create(null);
           ev._scratch['reflex-arc:dice'] = r;
           bot.log?.info?.(`[ReflexArc] ${body}`);
+        }
+        // 本地骰子指令刚回过（.r/.ra）：这是既成事实，告诉模型别重复报、更别改数字
+        const receiptOn = bot.cfg.diceReceipt !== false;
+        const rollKey = String(ev.chatKey || '');
+        const roll = rollKey ? lastRoll.get(rollKey) : null;
+        if (receiptOn && roll && Date.now() - roll.at < 10 * 60 * 1000) {
+          ev.hint.push(`[反射弧/骰·上次] 刚才 ${roll.expr} = ${roll.total}（已经由本地直接回过；不要重复报这个数，也不要改）`);
+          lastRoll.delete(rollKey);
+        }
+        const mm = receiptOn && rollKey ? diceMismatch.get(rollKey) : null;
+        if (mm) {
+          ev.hint.push(`【反射弧回执】上一轮本地掷的是「${mm.expected}」，你报成了「${mm.seen}」；本地结果优先，不要自行改骰子。`);
+          diceMismatch.delete(rollKey);
         }
         const incoming = classifyIncoming({
           text: ev.text,
@@ -1227,19 +1626,29 @@ export default {
         } else if (incoming.hasForward || incoming.forwardId) {
           ev.hint.push('[反射弧/转发] 收到合并转发；没有 inline 内容，需要细节时走本地转发索引');
         }
-        if (incoming.imageCount) {
-          ev.hint.push(`[反射弧/图片] 本地收到 ${incoming.imageCount} 张图片/表情；OCR/视觉内容尚未解析`);
+        if (incoming.imageCount && bot?.cfg?.localVision === true) {
+          ev.hint.push(`[反射弧/图片] 本地收到 ${incoming.imageCount} 张图片/表情；本地视觉正在解析`);
         }
         if (incoming.links?.length) {
           ev.hint.push(`[反射弧/链接] ${incoming.links.slice(0, 2).join(' ')}（仅本地记录，不自动抓取）`);
         }
-        await injectFirstContactImpression(ev);
+        if (bot.cfg.impressionEnabled !== false) await injectFirstContactImpression(ev);
         await analyzeOneImage(ev);
         await injectMemoryLabHint(ev);
       } catch (e) {
         bot.log?.warn?.(`[ReflexArc] before-turn: ${e.message}`);
       }
     });
+
+    // 粗看必须晚于 kernel:context（order 50）——那时 ev.imagePaths / ev.imageParts 才填好；
+    // 本插件自身 order 是 36，所以这里显式抬到 60。
+    onBefore('before-turn', async (ev) => {
+      try {
+        await coarseLookLongImages(ev);
+      } catch (e) {
+        bot.log?.warn?.(`[ReflexArc] 粗看失败: ${e.message}`);
+      }
+    }, { order: 60 });
 
     bot.log?.info?.('[ReflexArc] ready');
   },

@@ -25,7 +25,7 @@ test('non-dice text has no reflex', () => {
   assert.equal(parseDice('今天吃什么', 100, 10), null);
 });
 
-test('reflex registers only a before-turn hint, no tool', () => {
+test('reflex registers before-turn hooks, no tool', () => {
   const tools = new Map();
   const stages = [];
   const bot = {
@@ -37,5 +37,5 @@ test('reflex registers only a before-turn hint, no tool', () => {
   reflex.setup(bot);
   assert.equal(reflex.id, 'reflex-arc');
   assert.equal(tools.size, 0);
-  assert.equal(stages.length, 1);
+  assert.deepEqual(stages.map((s) => s.stage), ['before-turn', 'before-turn']);
 });

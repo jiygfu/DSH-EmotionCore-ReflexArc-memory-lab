@@ -220,6 +220,17 @@ function makeDispatcher(bot) {
       return { ok: true, action, target: r.target, message_id: r.messageId };
     }
 
+    if (action === 'look') {
+      // 反射弧的本地能力：把上一张被粗看摘掉的图（QQ 默认画质）回灌到下一轮的提示里。
+      const fn = bot?.shared?.lookAtImage;
+      if (typeof fn !== 'function') throw new Error('反射弧未启用，取不到图');
+      const key = turnChat || target;
+      if (!key) throw new Error('look 需要会话上下文');
+      const r = await fn(key, text);
+      if (!r?.ok) throw new Error(r?.error || '取图失败');
+      return { ok: true, action, target: key, queued: true };
+    }
+
     if (action === 'image') {
       if (!target) throw new Error('image 需要 target');
       const file = safeImagePath(args.path || args.url, bot, bot?.cfg?.imageRoots);
@@ -409,9 +420,9 @@ export default {
     const { dispatch } = makeDispatcher(bot);
 
     bot.registerTool?.('ec', {
-      description: 'EmotionCore 本地动作：send/reply/image/sticker/at/user/history/recall/groups。recall 先返回事件索引，再用 episode_id/memory_id 逐层深入。群聊里 history/recall/user/groups 只查本群；私聊可跨群。',
+      description: 'EmotionCore 本地动作：send/reply/image/sticker/at/user/history/recall/groups/look。recall 先返回事件索引，再用 episode_id/memory_id 逐层深入。群聊里 history/recall/user/groups 只查本群；私聊可跨群。',
       parameters: {
-        action: { type: 'string', required: true, description: 'send/reply/image/sticker/at/user/history/groups；recall=记忆索引/详情，recall+message_id=撤回' },
+        action: { type: 'string', required: true, description: 'send/reply/image/sticker/at/user/history/groups；look=看上一张被本地粗看省略的图；recall=记忆索引/详情，recall+message_id=撤回' },
         target: { type: 'string', description: 'group:<群号> 或 private:<QQ号>；send/reply/image/sticker/at/history 需要' },
         text: { type: 'string', description: '文本内容；send/reply/image 可用' },
         path: { type: 'string', description: 'image 的本地绝对路径或 http(s) URL' },
