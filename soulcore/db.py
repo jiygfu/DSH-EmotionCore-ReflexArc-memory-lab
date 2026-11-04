@@ -540,6 +540,36 @@ def init_db(conn: sqlite3.Connection) -> None:
       payload_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS event_streams (
+      stream_id TEXT PRIMARY KEY,
+      snapshot_id TEXT,
+      thread_id TEXT,
+      title TEXT,
+      summary TEXT,
+      domain TEXT NOT NULL DEFAULT 'real',
+      confidence REAL NOT NULL DEFAULT 0,
+      reference_weight REAL NOT NULL DEFAULT 1.0,
+      personality_eligible INTEGER NOT NULL DEFAULT 1,
+      verified INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS event_summaries (
+      stream_id TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS event_memory_links (
+      stream_id TEXT NOT NULL,
+      memory_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'anchor',
+      score REAL NOT NULL DEFAULT 0,
+      exact_quote INTEGER NOT NULL DEFAULT 0,
+      evidence TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (stream_id,memory_id,role)
+    )""")
     conn.executescript(SCHEMA)
     _ensure_column(conn, "memories", "affect_weight", "REAL DEFAULT 1.0")
     _ensure_column(conn, "memories", "consolidation_state", "TEXT DEFAULT 'none'")

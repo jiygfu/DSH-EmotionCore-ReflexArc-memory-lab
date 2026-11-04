@@ -207,6 +207,20 @@ scripts/event_snapshot_shadow.py
 
 单条 fixture 测试中，exact quote 的绑定分数为 1.00，状态 `verified`；没有写生产绑定。
 
+### 快照落地（默认 dry-run）
+
+```text
+soulcore/event_snapshot_apply.py
+scripts/event_snapshot_apply.py
+```
+
+- 只有 `verified` 的锚点才会生成 `event_streams` / `event_summaries` / `event_memory_links`；
+- 默认只打印计划，`--write` 才写库；
+- 仍不更新 `thread_loops`，不自动关闭事件；
+- roleplay stream 写 `personality_eligible=0`、`reference_weight=0.60`。
+
+临时库验证通过：1 个 verified fixture → 1 stream / 1 summary / 1 link。
+
 ## 4. 本地匹配
 
 先规则/向量，2B 只做模糊候选复核。
