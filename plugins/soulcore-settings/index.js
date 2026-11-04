@@ -25,6 +25,8 @@ const SURFCORE_ROOT = process.env.SURFCORE_ROOT || path.join(process.env.USERPRO
 // character directory. Keep them separate: character data vs runtime state.
 const STATE_DIR = process.env.SURFCORE_STATE_DIR || path.join(process.env.USERPROFILE || '', 'surfcore', 'state')
 const SETTINGS_PATH = path.join(DATA, 'soul-bridge-settings.json')
+const PERSONA_PATH = path.join(ROOT, 'config', 'emotioncore-persona.md')
+const AGENTS_PATH = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'workspace', 'AGENTS.local.md')
 const VERSION_PATH = path.join(ROOT, 'VERSION')
 const CALL_LOG = path.join(DATA, 'memory-tool-calls.jsonl')
 const LAYER_CALL_LOG = path.join(DATA, 'memory-layer-calls.jsonl')
@@ -556,6 +558,8 @@ async function state(ctx) {
     root: ROOT,
     settingsPath: SETTINGS_PATH,
     settings,
+    persona: await readFile(PERSONA_PATH, 'utf8').catch(() => ''),
+    personaSource: { personaPath: PERSONA_PATH, agentsPath: AGENTS_PATH },
     toolRegistered,
     fish: await fishStatus(),
     db: await fileInfo(settings.dbPath),
@@ -587,6 +591,25 @@ async function action(ctx, body) {
   if (kind === 'save') {
     const next = await saveSettings(body.settings)
     return { ok: true, settings: next, message: '设置已保存' }
+  }
+  if (kind === 'persona') {
+    const text = String(body?.persona || '').trim().slice(0, 20000)
+    if (!text) return { ok: false, error: '人格提示词为空' }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    for (const [src, name] of [[PERSONA_PATH, 'persona'], [AGENTS_PATH, 'agents']]) {
+      try {
+        const old = await readFile(src, 'utf8')
+        await writeFile(`${src}.bak-settings-${stamp}`, old, 'utf8')
+      } catch {}
+    }
+    const header = '# 人格来自 EmotionCore（本地人格层）\n\n'
+    await writeFile(PERSONA_PATH, text + '\n', 'utf8')
+    await writeFile(AGENTS_PATH, header + text + '\n', 'utf8')
+    return {
+      ok: true,
+      persona: text,
+      message: '人格提示词已保存；下一次新会话/睡醒时加载 AGENTS.local.md',
+    }
   }
   if (kind === 'capability') {
     const key = String(body.key || '')

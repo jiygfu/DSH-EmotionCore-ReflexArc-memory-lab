@@ -162,6 +162,7 @@ window.__ModuleLoader__.load({
       const [memoryId, setMemoryId] = React.useState('')
       const [personQq, setPersonQq] = React.useState('')
       const [context, setContext] = React.useState(null)
+      const [persona, setPersona] = React.useState('')
 
       const refresh = React.useCallback(async () => {
         setBusy('refresh')
@@ -169,6 +170,7 @@ window.__ModuleLoader__.load({
           const next = await request('state')
           setData(next)
           setDraft(next.settings || {})
+          setPersona(next.persona || '')
         } catch (error) {
           setNotice({ kind: 'err', text: String(error?.message || error) })
         } finally {
@@ -397,6 +399,20 @@ window.__ModuleLoader__.load({
                 },
               }),
             }, '保存'))),
+
+        h('div', { style: styles.section },
+          h('div', { style: styles.sectionTitle }, '人格提示词'),
+          h('div', { style: styles.sectionHint }, '这里是唯一可编辑入口。保存后同步 config/emotioncore-persona.md 和 QQ workspace/AGENTS.local.md；下一次新会话/睡醒时由 DSH 加载，不改变当前会话。'),
+          h('textarea', {
+            value: persona, disabled: !!busy,
+            style: { ...styles.input, width: '100%', minHeight: 220, lineHeight: 1.6, resize: 'vertical' },
+            onChange: (e) => setPersona(e.target.value),
+          }),
+          h('div', { style: styles.buttonRow },
+            h('button', {
+              style: styles.button2, disabled: !!busy || !persona.trim(),
+              onClick: () => void doAction('persona', { persona }),
+            }, busy === 'persona' ? '保存中…' : '保存人格提示词'))),
 
         h('div', { style: styles.section },
           h('div', { style: styles.sectionTitle }, '作息问候'),

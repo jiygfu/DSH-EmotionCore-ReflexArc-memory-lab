@@ -46,8 +46,8 @@ _LOCK = threading.Lock()
 _LAYER_LOG_LOCK = threading.Lock()
 
 CONTINUITY = [
-    "你是 EmotionCore 的表层语言层（L6）；本地记忆和情绪是底座，不是需要你证明的外部系统。",
-    "本地记忆库是连续性的底座；窗口清空不等于记忆消失，查得到。",
+    "你是这个身体的表层语言层（L6），负责说话和行动。",
+    "本地记忆和情绪是同一身体的底层；窗口清空不等于记忆消失，查得到。",
     "L2 事件卡只是索引，不是全部；不确定就查，不要用想象补。",
     "私聊和群聊共用同一套长期记忆。",
     "连续性由本地库维持，不需要靠宣告证明。",
@@ -133,16 +133,22 @@ def _persona() -> str:
         return ""
 
 
-def _first_wake() -> bool:
+def _first_wake(chat_key: str = "default") -> bool:
     today = datetime.now().astimezone().date().isoformat()
+    key = str(chat_key or "default")
     try:
         data = json.loads(WAKE_STATE.read_text(encoding="utf-8"))
     except Exception:
         data = {}
-    if data.get("day") == today:
+    chats = data.get("chats") if isinstance(data.get("chats"), dict) else {}
+    if chats.get(key) == today:
         return False
+    chats[key] = today
     WAKE_STATE.parent.mkdir(parents=True, exist_ok=True)
-    WAKE_STATE.write_text(json.dumps({"day": today, "at": db.localnow()}, ensure_ascii=False), encoding="utf-8")
+    WAKE_STATE.write_text(
+        json.dumps({"chats": chats, "at": db.localnow()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
     return True
 
 
@@ -394,7 +400,7 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
     with _LOCK:
         conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
         try:
-            first = False if preview else _first_wake()
+            first = False if preview else _first_wake(chat_key)
             person = None if preview else _person(conn, qq, name, is_owner=bool(sender.get("isMaster")))
             if first:
                 try:

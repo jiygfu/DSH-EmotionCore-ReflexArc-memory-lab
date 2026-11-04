@@ -16,7 +16,7 @@ from typing import Any
 from . import body_state, daybook, db, desire, personality
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-MAX_CHARS = 900
+MAX_CHARS = 1100
 
 
 def _local(ts: str | None) -> str:
@@ -233,7 +233,13 @@ def build(conn: sqlite3.Connection) -> dict[str, Any]:
     who = _who(conn)
     body = _body()
 
-    lines = ["【交接｜刚睡醒】", "你刚结束一次睡眠整理，现在接回 QQ。"]
+    lines = [
+        "【交接｜刚睡醒】",
+        "你刚结束一次睡眠整理，现在接回 QQ。",
+        "【这是新会话的第一轮】",
+        "创建新会话 = 刚睡醒：窗口清空，但本地记忆和关系还在，需要时可查。",
+        "你是这个身体的表层语言层（L6），负责说话和行动；本地记忆和情绪是同一身体的底层。",
+    ]
     if episode:
         where = _place(episode.get("conversation_key"))
         when = _local(episode.get("end_at") or episode.get("start_at"))
@@ -280,13 +286,12 @@ def build(conn: sqlite3.Connection) -> dict[str, Any]:
         "【可以核对】",
         "需要旧事时用当前通道可用的本地记忆查询；旧的 soulcore_memory 入口已下线。",
         "这些是交接线索，不是要求你相信的宣告。",
-        "",
-        "【不用担心睡醒后记忆模糊】",
-        "人类也这样。",
     ])
     text = "\n".join(lines).strip()
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS].rstrip() + "\n…"
+    footer = "\n\n【不用担心睡醒后记忆模糊】\n人类也这样。"
+    if len(text) + len(footer) > MAX_CHARS:
+        text = text[: max(0, MAX_CHARS - len(footer))].rstrip() + "\n…"
+    text += footer
     return {
         "schema": "emotioncore.handoff.v1",
         "at": db.localnow(),
