@@ -50,6 +50,7 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
             confidence = max(0.0, min(1.0, float(item.get("confidence") or 0.0)))
         except Exception:
             confidence = 0.0
+        roleplay = domain == "roleplay"
         events.append({
             "event_id": _clean(item.get("event_id") or "", 120),
             "stream_id": _clean(item.get("stream_id") or "", 120),
@@ -62,6 +63,14 @@ def normalize(payload: dict[str, Any]) -> dict[str, Any]:
             "open_items": [_clean(x, 300) for x in (item.get("open_items") or []) if str(x)][:10],
             "knowledge": [_clean(x, 300) for x in (item.get("knowledge") or []) if str(x)][:10],
             "confidence": confidence,
+            # Game knowledge/commitments remain recallable, but never carry
+            # full real-life confidence or personality authority.
+            "effective_confidence": round(confidence * 0.80, 3) if roleplay else confidence,
+            "confidence_tier": "low" if roleplay else ("high" if confidence >= 0.80 else "medium" if confidence >= 0.50 else "low"),
+            "reference_weight": 0.60 if roleplay else 1.0,
+            "personality_eligible": not roleplay,
+            "signal_scope": "fiction" if roleplay else "real",
+            "emotion_boost": ["fun", "curiosity"] if roleplay else [],
             "is_new": bool(item.get("is_new")),
         })
     pressure = payload.get("pressure") if isinstance(payload.get("pressure"), dict) else {}
