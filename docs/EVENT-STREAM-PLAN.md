@@ -242,7 +242,8 @@ scripts/event_snapshot_apply.py
 ```
 
 - 只有 `verified` 的锚点才会生成 `event_streams` / `event_summaries` / `event_memory_links`；
-- 默认只打印计划，`--write` 才写库；
+- `SNAPSHOT.auto_apply=true` 时，80% 快照在 API 返回后会立即做一次 verified-only 落地；
+- 手动 CLI 仍默认 dry-run，`--write` 才写库；
 - 仍不更新 `thread_loops`，不自动关闭事件；
 - roleplay stream 写 `personality_eligible=0`、`reference_weight=0.60`。
 

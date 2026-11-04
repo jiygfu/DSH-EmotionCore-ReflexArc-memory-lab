@@ -12,7 +12,7 @@ import os
 import sqlite3
 from typing import Any
 
-from . import appraise, config, event_snapshot
+from . import appraise, config, event_snapshot, event_snapshot_apply
 
 PROMPT = """你是事件快照器，不是聊天角色。现在上下文即将被压缩，请在压缩前把材料里的事件整理成 JSON。
 只能使用材料中明确出现的内容，不得补造事实。
@@ -128,4 +128,14 @@ def request_snapshot(
         "events": events,
     }
     saved = event_snapshot.save(conn, snapshot)
-    return {"ok": True, "snapshot": saved, "messages": len(messages), "events": len(events)}
+    applied = None
+    if cfg.get("auto_apply") is True:
+        planned = event_snapshot_apply.plan(conn, snapshot, saved["snapshot_id"])
+        applied = event_snapshot_apply.apply(conn, planned, dry_run=False)
+    return {
+        "ok": True,
+        "snapshot": saved,
+        "messages": len(messages),
+        "events": len(events),
+        "applied": applied,
+    }

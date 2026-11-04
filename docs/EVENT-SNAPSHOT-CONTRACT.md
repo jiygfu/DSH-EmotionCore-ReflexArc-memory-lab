@@ -111,7 +111,9 @@ retrieval.search_memories(quote)
 - `unmatched` keeps the raw snapshot, but does not create an event;
 - roleplay gets `effective_confidence=confidence*0.8`,
   `confidence_tier=low`, `personality_eligible=false`,
-  `reference_weight=0.60`.
+  `reference_weight=0.60`;
+- when `SNAPSHOT.auto_apply=true`, only verified anchors are written to
+  `event_streams` / `event_memory_links` automatically.
 
 Read-only probe:
 

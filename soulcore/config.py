@@ -47,6 +47,9 @@ SNAPSHOT = {
     "max_messages": 80,
     "max_chars": 40000,
     "event_limit": 20,
+    # Only verified anchors are written; thread_loops closure/anchors remain
+    # under the existing local lifecycle.
+    "auto_apply": True,
 }
 
 DREAM = {
