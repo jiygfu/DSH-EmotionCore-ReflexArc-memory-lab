@@ -433,7 +433,18 @@ window.__ModuleLoader__.load({
             h('button', {
               style: styles.button2, disabled: !!busy || !personaName.trim() || !persona.trim(),
               onClick: () => void doAction('persona-save-as', { name: personaName, persona }),
-            }, '另存')),
+            }, '另存'),
+            h('button', {
+              style: styles.button2, disabled: !!busy || !personaName.trim(),
+              onClick: () => void doAction('persona-new', { name: personaName }),
+            }, '新建模板'),
+            h('button', {
+              style: styles.button2, disabled: !!busy || !personaName.trim() || !personaPick,
+              onClick: () => {
+                if (!window.confirm(`把人格「${personaPick}」重命名为「${personaName}」？`)) return
+                void doAction('persona-rename', { old: personaPick, name: personaName })
+              },
+            }, '重命名')),
           h('div', { style: styles.buttonRow },
             h('button', {
               style: styles.button2, disabled: !!busy || !persona.trim(),

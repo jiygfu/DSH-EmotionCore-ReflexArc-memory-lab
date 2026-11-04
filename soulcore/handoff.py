@@ -235,10 +235,9 @@ def build(conn: sqlite3.Connection) -> dict[str, Any]:
 
     lines = [
         "【交接｜刚睡醒】",
-        "你刚结束一次睡眠整理，现在接回 QQ。",
+        "你刚接回 QQ。",
         "【这是新会话的第一轮】",
-        "创建新会话 = 刚睡醒：窗口清空，但本地记忆和关系还在，需要时可查。",
-        "你是这个身体的表层语言层（L6），负责说话和行动；本地记忆和情绪是同一身体的底层。",
+        "刚睡醒：窗口清空，本地记忆和关系还在，需要时可查。",
     ]
     if episode:
         where = _place(episode.get("conversation_key"))

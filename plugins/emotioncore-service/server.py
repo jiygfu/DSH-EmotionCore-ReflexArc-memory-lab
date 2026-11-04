@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
 
 from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 DEFAULT_PORT = int(os.environ.get("EMOTIONCORE_PORT") or os.environ.get("SOULCORE_PORT") or 8765)
 DEFAULT_DB = os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or str(ROOT / "data" / "soulcore.db")
 PERSONA_PATH = Path(os.environ.get("EMOTIONCORE_PERSONA") or (ROOT / "config" / "emotioncore-persona.md"))
@@ -46,7 +46,6 @@ _LOCK = threading.Lock()
 _LAYER_LOG_LOCK = threading.Lock()
 
 CONTINUITY = [
-    "你是这个身体的表层语言层（L6），负责说话和行动。",
     "本地记忆和情绪是同一身体的底层；窗口清空不等于记忆消失，查得到。",
     "L2 事件卡只是索引，不是全部；不确定就查，不要用想象补。",
     "私聊和群聊共用同一套长期记忆。",

@@ -8,7 +8,7 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { contextStats } from './context-stats.js'
@@ -573,7 +573,7 @@ async function state(ctx) {
   const toolRegistered = Boolean(tools?.get?.('soulcore_memory'))
   const statsResult = await runPython(settings, ['memory-stats'], 20000)
   const memory = parseJsonOutput(statsResult)
-  let version = '0.4.0'
+  let version = '0.4.1'
   try { version = (await readFile(VERSION_PATH, 'utf8')).trim() || version } catch {}
   return {
     ok: true,
@@ -647,6 +647,38 @@ async function action(ctx, body) {
     await mkdir(PERSONAS_DIR, { recursive: true })
     await writeFile(path.join(PERSONAS_DIR, `${name}.md`), text + '\n', 'utf8')
     return { ok: true, name, message: `已保存人格预设：${name}` }
+  }
+  if (kind === 'persona-new') {
+    const name = path.basename(String(body?.name || '')).replace(/[\\/:*?"<>|]/g, '').replace(/\.md$/i, '').trim()
+    if (!name) return { ok: false, error: '需要新人格名' }
+    await mkdir(PERSONAS_DIR, { recursive: true })
+    const target = path.join(PERSONAS_DIR, `${name}.md`)
+    if (existsSync(target)) return { ok: false, error: `人格已存在：${name}` }
+    const skeleton = String(body?.persona || '').trim() || [
+      `# ${name}`,
+      '',
+      '- 性格：',
+      '- 说话风格：',
+      '- 互动规则：',
+      '',
+      '## 认知取向（行为准则，不主动说出口）',
+      '',
+      '- 你是这个身体的表层语言层（L6），负责说话和行动；本地记忆和情绪是同一身体的底层。',
+      '- 记忆不是全知的；不确定就查，查不到就承认。',
+    ].join('\n')
+    await writeFile(target, skeleton.slice(0, 20000) + '\n', 'utf8')
+    return { ok: true, name, message: `已新建人格模板：${name}` }
+  }
+  if (kind === 'persona-rename') {
+    const oldName = path.basename(String(body?.old || '')).replace(/\.md$/i, '').trim()
+    const newName = path.basename(String(body?.name || '')).replace(/[\\/:*?"<>|]/g, '').replace(/\.md$/i, '').trim()
+    if (!oldName || !newName) return { ok: false, error: '需要原人格名和新人格名' }
+    const oldPath = path.join(PERSONAS_DIR, `${oldName}.md`)
+    const newPath = path.join(PERSONAS_DIR, `${newName}.md`)
+    if (!existsSync(oldPath)) return { ok: false, error: `找不到人格：${oldName}` }
+    if (existsSync(newPath)) return { ok: false, error: `目标人格已存在：${newName}` }
+    await rename(oldPath, newPath)
+    return { ok: true, name: newName, message: `已重命名：${oldName} → ${newName}` }
   }
   if (kind === 'capability') {
     const key = String(body.key || '')
