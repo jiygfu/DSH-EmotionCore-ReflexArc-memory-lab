@@ -30,6 +30,9 @@ KNOW_RE = re.compile(r"(为什么|怎么|如何|原理|代码|报错|模型|学�
 LONG_RE = re.compile(r"(长期|以后|持续|一直|以后都|计划|目标|习惯|需要)")
 EMO_RE = re.compile(r"(喜欢|讨厌|生气|难过|开心|担心|害怕|对不起|道歉|烦)")
 CONFLICT_RE = re.compile(r"(吵|冲突|生气|对不起|道歉|敏感)")
+ROLEPLAY_RE = re.compile(r"(跑团|扮演|剧情|回合|检定|骰|dm|npc|夜场|旁白|你走进|门楣|金铃|角色卡|主持人)")
+STAGE_RE = re.compile(r"[（(][^）)]{2,}[）)]")
+TECH_RE = re.compile(r"(模型|代码|api|配置|部署|上下文|数据库|接口|测试|报错|本地|系统|程序|token|记忆|检索|提示词)")
 
 
 def parse_ts(value: str | None) -> datetime | None:
@@ -59,18 +62,26 @@ def signals(text: str) -> list[str]:
     return out
 
 
-def classify(items: list[sqlite3.Row], duration_min: float) -> tuple[str, list[str], str]:
+def classify(items: list[sqlite3.Row], duration_min: float) -> tuple[str, list[str], str, str, bool]:
     text = " ".join(str(x["text"] or "") for x in items)
     sig = signals(text)
     max_imp = max(float(x["importance"] or 0) for x in items)
     max_unres = max(float(x["unresolved"] or 0) for x in items)
+    rp_terms = set(ROLEPLAY_RE.findall(text.lower()))
+    rp_score = len(rp_terms) + (1 if STAGE_RE.search(text) and len(rp_terms) >= 2 else 0)
+    tech_score = len(set(TECH_RE.findall(text.lower())))
+    if rp_score >= 3 and tech_score < 3:
+        # Roleplay/scenario commitments are in-fiction. Never promote them into
+        # long-term personality promises; keep a normal entertainment archive.
+        kind = "micro" if len(items) <= 2 and duration_min <= 10 else "normal"
+        return kind, sig, "roleplay/entertainment", "roleplay_entertainment", False
     if "commitment" in sig or "knowledge" in sig or "long_term" in sig or "conflict" in sig:
-        return "major", sig, "strong signal"
+        return "major", sig, "strong signal", "ordinary", True
     if max_imp >= 0.55 or max_unres >= 0.50:
-        return "major", sig, "high importance/unresolved"
+        return "major", sig, "high importance/unresolved", "ordinary", True
     if len(items) <= 2 and duration_min <= 10 and not sig:
-        return "micro", sig, "short chat"
-    return "normal", sig, "ordinary multi-turn"
+        return "micro", sig, "short chat", "ordinary", False
+    return "normal", sig, "ordinary multi-turn", "ordinary", False
 
 
 def extractive_summary(items: list[sqlite3.Row]) -> str:
@@ -141,7 +152,7 @@ def main() -> int:
         start = parse_ts(items[0]["ts"])
         end = parse_ts(items[-1]["ts"])
         duration = ((end - start).total_seconds() / 60) if start and end else 0
-        kind, sig, reason = classify(items, duration)
+        kind, sig, reason, content_class, long_term_eligible = classify(items, duration)
         participants = sorted({str(x["speaker"] or "") for x in items if x["speaker"]})
         out.append({
             "chunk_id": f"shadow_chunk_{args.day}_{i:03d}",
@@ -153,7 +164,10 @@ def main() -> int:
             "items": len(items),
             "participants": participants,
             "event_class": kind,
+            "content_class": content_class,
+            "long_term_eligible": long_term_eligible,
             "signals": sig,
+            "signal_scope": "fiction" if not long_term_eligible and content_class == "roleplay_entertainment" else "real",
             "reason": reason,
             "summary": extractive_summary(items),
             "memory_ids": [x["id"] for x in items],
@@ -184,13 +198,13 @@ def main() -> int:
         "",
         "> 只读 shadow；没有写数据库，没有调用 API。",
         "",
-        "| chunk | 时间 | 会话 | 条数 | 分类 | 信号 | 摘要 |",
-        "| --- | --- | --- | ---: | --- | --- | --- |",
+        "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 长期资格 | 信号 | 摘要 |",
+        "| --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
     ]
     for x in out:
         conv = "私聊" if str(x["conversation_key"]).startswith("private:") else ("群聊" if str(x["conversation_key"]).startswith("group:") else "未知")
         lines.append(
-            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {','.join(x['signals']) or '-'} | {clean(x['summary'],80)} |"
+            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {x['content_class']} | {'是' if x['long_term_eligible'] else '否'} | {','.join(x['signals']) or '-'} | {clean(x['summary'],80)} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

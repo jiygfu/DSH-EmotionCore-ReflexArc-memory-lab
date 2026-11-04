@@ -63,6 +63,46 @@ normal  普通多轮事件；本地摘要
 major   承诺、长期需求、知识问题、决策、冲突、重要情绪；可进入可选 API 压缩
 ```
 
+### 事件优先：扮演/跑团/情景模拟
+
+如果判定为 `roleplay_entertainment`：
+
+```text
+content_class       roleplay_entertainment
+long_term_eligible  false
+signal_scope        fiction
+event_class         最多 normal（娱乐归档）
+```
+
+其中出现的“答应/明天/继续/承诺”是 **in-fiction commitment**：
+
+- 只作为该娱乐事件的内部状态；
+- 不升级为长期人格承诺；
+- 不进入长期待办/好奇跟进；
+- 不因为角色扮演里的“知识问题”变成 major；
+- 只保留事件摘要和可查文本。
+
+判定必须同时避免误伤技术讨论：出现较多 `模型/代码/API/上下文/数据库/配置` 时，不按扮演处理。
+
+## 3.5 跨天与未完成标记
+
+不新增第二套定时器。跨天仍复用现有：
+
+```text
+thread_loops
+  thread_id
+  status        waiting / paused / closing
+  anchor_text
+  anchor_at
+```
+
+- `event_stream` 只做派生索引，**thread_id 与现有 thread_loops 对齐**；
+- 未完成事项写入/更新 `thread_loops` 的 `status` / `anchor_at`；
+- 现有跨日再触发继续读 `anchor_at`，行为不变；
+- 一个 stream 对应一个 loop，避免重复提醒；
+- 若 stream 没有未完成项，不创建 loop；
+- 旧 `episodes`/L5 仍读 `thread_loops`，不需要新注入层。
+
 ## 4. 本地匹配
 
 先规则/向量，2B 只做模糊候选复核。
@@ -190,7 +230,7 @@ scripts/event_stream_shadow.py
 
 只读当前 `soulcore.db`，按 conversation + 20 分钟间隔切 chunk，输出 micro/normal/major 和本地抽取摘要。
 
-首轮结果（2026-11-03）：
+首轮结果（2026-11-03，校准前）：
 
 ```text
 78 条原始消息
@@ -198,8 +238,17 @@ scripts/event_stream_shadow.py
 1 micro / 1 normal / 4 major
 ```
 
-问题：`major` 触发过宽，角色扮演里的“继续/知识”也被当成 major。  
-所以 Phase 1 不启用生产写入，先校准信号和阈值。
+问题：`major` 触发过宽，角色扮演里的“继续/知识”也被当成 major。
+
+加入 `roleplay_entertainment` 优先判定和技术讨论防误伤后：
+
+```text
+1 micro / 3 normal / 2 major
+roleplay chunks: normal + long_term_eligible=false
+技术讨论 chunk: major + long_term_eligible=true
+```
+
+仍不启用生产写入；先继续校准和做候选匹配。
 
 ## 11. 执行顺序
 
