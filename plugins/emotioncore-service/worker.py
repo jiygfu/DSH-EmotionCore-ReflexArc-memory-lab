@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from soulcore import appraise, body_state, consolidate, daybook, db, dream, episodes, handoff, patience, people, purpose_seed, thread_loops, thread_model  # noqa: E402
+from soulcore import appraise, body_state, consolidate, daybook, db, dream, episodes, greeting, handoff, patience, people, purpose_seed, thread_loops, thread_model  # noqa: E402
 
 LOG = Path(os.environ.get("EMOTIONCORE_WORKER_LOG") or (ROOT / "logs" / "emotioncore-worker.log"))
 SCHEDULE = Path(os.environ.get("EMOTIONCORE_SCHEDULE") or (ROOT / "data" / "emotioncore-schedule.json"))
@@ -200,6 +200,13 @@ def cycle(db_path: str, *, appraise_limit: int = 5, review_limit: int = 2) -> No
             log(f"body refresh ok stress={bs.get('states', {}).get('stress')}")
         except Exception as e:
             log(f"body refresh failed: {e}")
+        try:
+            greets = greeting.run_due()
+            sent = [k for k, v in greets.items() if v.get("sent")]
+            if sent or any(not v.get("ok") for v in greets.values()):
+                log(f"greeting {greets}")
+        except Exception as e:
+            log(f"greeting failed: {e}")
         try:
             built = episodes.build_day(conn)
             threads = thread_model.assign_threads(conn, max_model_reviews=0)

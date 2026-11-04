@@ -79,6 +79,77 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function ContextPanel(props) {
+      const data = props.data
+      const ok = data?.ok === true
+      const last = data?.last || null
+      const share = data?.share || null
+      const thresholds = data?.thresholds || {}
+      const num = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'))
+      const pct = (v, digits = 1) => (v == null ? '—' : `${(v * 100).toFixed(digits)}%`)
+      const clock = (ms) => (ms ? new Date(ms).toLocaleTimeString('zh-CN', { hour12: false }) : '—')
+      const segments = [
+        ['scaffold', '脚手架', C.warn, 1],
+        ['human', '真人文本', C.ok, 1],
+        ['assistant', '助手/工具入参', C.accent, 1],
+        ['reasoning', '推理块', C.muted, 1],
+        ['toolResult', '工具结果', C.accent, 0.5],
+        ['systemTools', '系统+工具 schema', C.muted, 0.55],
+      ]
+      const card = (label, value, hint) => h('div', { style: styles.card },
+        h('div', { style: styles.label }, label),
+        h('div', { style: styles.value }, value),
+        hint ? h('div', { style: { ...styles.rowDesc, marginTop: 3 } }, hint) : null)
+
+      return h('div', { style: styles.section },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 } },
+          h('div', null,
+            h('div', { style: styles.sectionTitle }, '上下文占用（QQ 线 · 实时）'),
+            h('div', { style: styles.sectionHint }, '只读：最近一次 API 请求的 prompt 规模与构成，每 5 秒刷新。数据来自 QQ 会话日志里的 usage 记录，与聊天框环形图同源。'),
+          ),
+          h('span', { style: styles.badge },
+            h('span', { style: styles.dot(ok ? C.ok : C.warn) }),
+            ok ? `更新于 ${clock(data.at)}` : (data?.error || '等待数据')),
+        ),
+        ok ? h('div', null,
+          h('div', { style: styles.grid },
+            card('当前 prompt', num(last?.prompt), `${pct(data.pressure)} · 窗口 ${num(data.contextWindow)}`),
+            card('每轮增长', `+${num(data.growthPerTurn)}`, `平均 ${num(data.avgPrompt)} / 请求`),
+            card('累计 prompt', num(data.totals?.prompt), `${num(data.requests)} 次请求 · ${num(data.turns)} 轮`),
+            card('缓存命中', pct(data.totals?.cacheHitRate), `新输入 ${num(data.totals?.input)}`),
+            card('脚手架占比', pct(share?.scaffold), `≈ ${num(data.tokens?.scaffold)} tokens`),
+            card('距离快照', `${num(thresholds.turnsToSnapshot)} 轮`, `阈值 ${pct(thresholds.snapshot, 0)} · ${num(thresholds.snapshotTokens)}`),
+          ),
+          h('div', { style: { display: 'flex', height: 10, borderRadius: 99, overflow: 'hidden', background: C.layer2, margin: '2px 0 8px' } },
+            ...segments.map(([key, , color, alpha]) => share?.[key]
+              ? h('div', { key, style: { width: `${share[key] * 100}%`, background: color, opacity: alpha } })
+              : null)),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12 } },
+            ...segments.map(([key, label, color, alpha]) => h('span', {
+              key, style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: C.muted },
+            },
+              h('span', { style: { width: 8, height: 8, borderRadius: 2, background: color, opacity: alpha, display: 'inline-block' } }),
+              `${label} ${num(data.tokens?.[key])} · ${pct(share?.[key])}`))),
+          h('div', { style: { height: 4, background: C.layer2, borderRadius: 99, overflow: 'hidden', margin: '12px 0 4px' } },
+            h('div', { style: { width: `${Math.min(100, (data.pressure || 0) * 100)}%`, height: '100%', background: C.accent } })),
+          h('div', { style: styles.rowDesc },
+            `快照 ${num(thresholds.snapshotTokens)} · 压缩 ${num(thresholds.compactionTokens)} · ${data.model || '—'} · 会话 ${String(data.sessionId || '').slice(0, 8)}`),
+          h('table', { style: { ...styles.table, marginTop: 10 } },
+            h('thead', null, h('tr', null,
+              ...['时间', '轮', 'step', 'prompt', '新输入', '缓存', '输出'].map((t) => h('th', { key: t, style: styles.th }, t)))),
+            h('tbody', null,
+              ...(data.recent || []).slice(-8).map((r, i) => h('tr', { key: i },
+                h('td', { style: styles.td }, clock(r.time)),
+                h('td', { style: styles.td }, String(r.turn ?? '—')),
+                h('td', { style: styles.td }, String(r.step ?? '—')),
+                h('td', { style: styles.td }, num(r.prompt)),
+                h('td', { style: styles.td }, num(r.input)),
+                h('td', { style: styles.td }, num(r.cacheRead)),
+                h('td', { style: styles.td }, num(r.output)))))))
+          : h('div', { style: styles.rowDesc }, data?.error || '正在读取 QQ 线会话…'),
+      )
+    }
+
     function Section(props) {
       const [data, setData] = React.useState(null)
       const [draft, setDraft] = React.useState({})
@@ -90,6 +161,7 @@ window.__ModuleLoader__.load({
       const [episodeId, setEpisodeId] = React.useState('')
       const [memoryId, setMemoryId] = React.useState('')
       const [personQq, setPersonQq] = React.useState('')
+      const [context, setContext] = React.useState(null)
 
       const refresh = React.useCallback(async () => {
         setBusy('refresh')
@@ -105,6 +177,22 @@ window.__ModuleLoader__.load({
       }, [])
 
       React.useEffect(() => { void refresh() }, [refresh])
+
+      // 上下文占用是独立轮询：只读、5 秒一次，失败不影响页面其它部分。
+      React.useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const next = await request('context')
+            if (alive) setContext(next)
+          } catch (error) {
+            if (alive) setContext({ ok: false, error: String(error?.message || error) })
+          }
+        }
+        void load()
+        const timer = setInterval(load, 5000)
+        return () => { alive = false; clearInterval(timer) }
+      }, [])
 
       const set = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }))
 
@@ -164,6 +252,8 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { style: styles.subtitle }, `EmotionCore for DSH / SurfCore · v${status?.version || '0.3.1'}：本地记忆、评价、L2 事件索引与系统状态。原文由 SurfCore 保存，EmotionCore 只做增强；内部兼容 ID 仍为 soulcore。`),
+
+        h(ContextPanel, { key: 'context-live', data: context }),
 
         h('div', { style: styles.section, key: 'startup-chain' },
           h('div', { style: styles.sectionTitle }, '启动链 / 运行与睡眠'),
@@ -304,6 +394,55 @@ window.__ModuleLoader__.load({
                   snapshotThreshold: Number(settings.snapshotThreshold ?? 0.80),
                   snapshotMaxMessages: Number(settings.snapshotMaxMessages ?? 80),
                   snapshotCooldownMs: Number(settings.snapshotCooldownMs ?? 600000),
+                },
+              }),
+            }, '保存'))),
+
+        h('div', { style: styles.section },
+          h('div', { style: styles.sectionTitle }, '作息问候'),
+          h('div', { style: styles.sectionHint }, '由本地 worker 定时发送，不调用模型、不占用对话上下文；只发给 OneBot 配置里的 adminQq。'),
+          h(Row, { first: true, name: '早安问候', desc: '到达时间后的 2 小时内发送一次；过窗口不补发。' },
+            h(Toggle, {
+              checked: settings.morningGreetingEnabled !== false, disabled: !!busy,
+              onChange: (v) => { set('morningGreetingEnabled', v); void doAction('save', { settings: { ...settings, morningGreetingEnabled: v } }) },
+            })),
+          h(Row, { name: '早安时间 / 文案' },
+            h('input', {
+              type: 'time', value: settings.morningGreetingTime ?? '08:30',
+              style: { ...styles.input, width: 110 }, disabled: !!busy,
+              onChange: (e) => set('morningGreetingTime', e.target.value),
+            }),
+            h('input', {
+              value: settings.morningGreetingText ?? '', placeholder: '早安文案',
+              style: { ...styles.input, width: 300 }, disabled: !!busy,
+              onChange: (e) => set('morningGreetingText', e.target.value),
+            })),
+          h(Row, { name: '晚安问候', desc: '夜间定时发送；不会触发完整睡眠/会话轮换。' },
+            h(Toggle, {
+              checked: settings.nightGreetingEnabled !== false, disabled: !!busy,
+              onChange: (v) => { set('nightGreetingEnabled', v); void doAction('save', { settings: { ...settings, nightGreetingEnabled: v } }) },
+            })),
+          h(Row, { name: '晚安时间 / 文案' },
+            h('input', {
+              type: 'time', value: settings.nightGreetingTime ?? '23:00',
+              style: { ...styles.input, width: 110 }, disabled: !!busy,
+              onChange: (e) => set('nightGreetingTime', e.target.value),
+            }),
+            h('input', {
+              value: settings.nightGreetingText ?? '', placeholder: '晚安文案',
+              style: { ...styles.input, width: 300 }, disabled: !!busy,
+              onChange: (e) => set('nightGreetingText', e.target.value),
+            })),
+          h(Row, { name: '保存作息问候', desc: '保存时间与文案；下一次 worker 检查生效。' },
+            h('button', {
+              style: styles.button2, disabled: !!busy,
+              onClick: () => void doAction('save', {
+                settings: {
+                  ...settings,
+                  morningGreetingTime: settings.morningGreetingTime ?? '08:30',
+                  morningGreetingText: settings.morningGreetingText ?? '',
+                  nightGreetingTime: settings.nightGreetingTime ?? '23:00',
+                  nightGreetingText: settings.nightGreetingText ?? '',
                 },
               }),
             }, '保存'))),

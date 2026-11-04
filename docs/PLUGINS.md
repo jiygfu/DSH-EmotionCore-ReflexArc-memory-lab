@@ -43,6 +43,7 @@ QQ 消息
 ## 文档
 
 - [启动链 / 睡眠整理](STARTUP-SLEEP-ROUTE.md)
+- [作息问候](GREETINGS.md)
 - [事件流与上下文压力计划](EVENT-STREAM-PLAN.md)
 - [Pre-compaction 事件快照契约](EVENT-SNAPSHOT-CONTRACT.md)
 - [分层记忆调用记录](MEMORY-LAYER-CALLS.md)

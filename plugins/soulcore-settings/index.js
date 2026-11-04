@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { contextStats } from './context-stats.js'
 
 export const name = 'soulcore-settings'
 export const inject = ['webServer']
@@ -67,6 +68,12 @@ const DEFAULTS = {
   snapshotHardStop: 0.95,
   snapshotMaxMessages: 80,
   snapshotCooldownMs: 600000,
+  morningGreetingEnabled: true,
+  morningGreetingTime: '08:30',
+  morningGreetingText: '早，醒了。今天也慢慢来。',
+  nightGreetingEnabled: true,
+  nightGreetingTime: '23:00',
+  nightGreetingText: '夜深了，我去睡了。晚安。',
 }
 
 async function sidecarPath() {
@@ -117,6 +124,10 @@ function cleanSettings(input) {
     const value = src[key]
     if (value === undefined) continue
     if (typeof DEFAULTS[key] === 'boolean') out[key] = value === true
+    else if (key.endsWith('GreetingTime')) {
+      const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(value || '').trim())
+      out[key] = m ? `${m[1].padStart(2, '0')}:${m[2]}` : DEFAULTS[key]
+    }
     else if (key === 'sleepHour') out[key] = Math.max(0, Math.min(23, Number(value) || 0))
     else if (key === 'snapshotThreshold' || key === 'snapshotHardStop') {
       const n = Number(value)
@@ -756,6 +767,18 @@ export function apply(ctx) {
       if (!loopback(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
       if (req.method !== 'GET') { json(res, 405, { ok: false, error: '只支持 GET' }); return }
       try { json(res, 200, await state(ctx)) }
+      catch (error) { json(res, 500, { ok: false, error: String(error?.message ?? error) }) }
+    },
+  }))
+
+  // Read-only live view of the QQ line's API context (prompt size, composition).
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/soulcore-settings/api/context',
+    handler: async (req, res) => {
+      if (!loopback(req)) { json(res, 403, { ok: false, error: '只接受本机回环访问' }); return }
+      if (req.method !== 'GET') { json(res, 405, { ok: false, error: '只支持 GET' }); return }
+      try { json(res, 200, contextStats()) }
       catch (error) { json(res, 500, { ok: false, error: String(error?.message ?? error) }) }
     },
   }))
