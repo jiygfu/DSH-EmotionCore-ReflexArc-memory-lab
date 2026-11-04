@@ -17,6 +17,32 @@ context only when the event packet is insufficient.
 
 ## Request
 
+The DSH host bundle `plugins/context-snapshot-trigger` sends a bounded packet
+to:
+
+```text
+POST http://127.0.0.1:8765/event_snapshot/request
+```
+
+Body:
+
+```json
+{
+  "session_id": "session-...",
+  "chat_key": "group:...",
+  "captured_at": "...",
+  "trigger": "context_pressure_80",
+  "pressure": {"pressureTokens": 820000, "contextWindow": 1000000, "ratio": 0.82},
+  "messages": [{"role": "user", "text": "..."}]
+}
+```
+
+EmotionCore calls the API once and stores the resulting snapshot. The direct
+`POST /event_snapshot` endpoint remains available for already-produced
+snapshots.
+
+## Direct snapshot payload
+
 `POST http://127.0.0.1:8765/event_snapshot`
 
 ```json

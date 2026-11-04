@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Context Snapshot Trigger",
+    "description": "At 80% context pressure, requests one pre-compaction event snapshot for local memory organization."
+  }
+}

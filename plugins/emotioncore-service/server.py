@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
+from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
 
 VERSION = "0.1.0"
 DEFAULT_PORT = int(os.environ.get("EMOTIONCORE_PORT") or os.environ.get("SOULCORE_PORT") or 8765)
@@ -773,6 +773,15 @@ def _event_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
             conn.close()
 
 
+def _event_snapshot_request(payload: dict[str, Any]) -> dict[str, Any]:
+    with _LOCK:
+        conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
+        try:
+            return event_snapshot_request.request_snapshot(conn, payload)
+        finally:
+            conn.close()
+
+
 def _health() -> dict[str, Any]:
     with _LOCK:
         conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
@@ -839,6 +848,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if u.path == "/event_snapshot":
                 self._send(200, _event_snapshot(payload))
+                return
+            if u.path == "/event_snapshot/request":
+                self._send(200, _event_snapshot_request(payload))
                 return
             self._send(404, {"ok": False, "error": "not found"})
         except Exception as e:  # keep the seam alive; logs the error in the response

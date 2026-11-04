@@ -35,6 +35,20 @@ APPRAISER = {
 
 # Sleep "dream" event review. Deliberately online-only: local 2B is used for
 # appraisal/vision side work, not for deciding whether a long event ended.
+SNAPSHOT = {
+    # Called only at the 80% pre-compaction point. Keep a bounded event packet;
+    # never send a duplicate full-context request.
+    "enabled": True,
+    "provider": "api",
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "timeout_s": 180,
+    "max_messages": 80,
+    "max_chars": 40000,
+    "event_limit": 20,
+}
+
 DREAM = {
     # Temporarily off: old backlog is human-reviewed first, and nightly online
     # event review is too expensive. Keep the API path for an explicit manual

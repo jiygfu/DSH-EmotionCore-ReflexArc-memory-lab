@@ -14,6 +14,7 @@ SurfCore 不是运行依赖；旧 SurfCore 文档仅作历史参考。
 | [`memory-lab`](../plugins/memory-lab/README.md) | Python sidecar | 只读多轴记忆召回实验 + 3D 图数据 | 实验 |
 | [`memory-lab-dsh`](../plugins/memory-lab-dsh/README.md) | DSH host + client | 启停 memory-lab，渲染「意识海」设置页 | 实验 |
 | [`soulcore-settings`](../plugins/soulcore-settings/README.md) | DSH host + client | EmotionCore 设置页、启动链、分层记忆调用记录 | 运行中 |
+| [`context-snapshot-trigger`](../plugins/context-snapshot-trigger/package.json) | DSH host bundle | 80% contextPressure 时请求一次 pre-compaction 事件快照 | 运行中 |
 | [`soul-bridge`](../plugins/soul-bridge/README.md) | DSH host 工具 | 旧 `soulcore_memory` 工具；当前 QQ 线通常不用 | 可选/兼容 |
 
 ## 数据流

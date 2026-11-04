@@ -1,0 +1,10 @@
+- insert:
+    - id: context-snapshot-trigger
+      name: '@local/context-snapshot-trigger'
+      config:
+        enabled: true
+        threshold: 0.80
+        hardStop: 0.95
+        cooldownMs: 600000
+        maxMessages: 80
+        baseUrl: 'http://127.0.0.1:8765/event_snapshot/request'

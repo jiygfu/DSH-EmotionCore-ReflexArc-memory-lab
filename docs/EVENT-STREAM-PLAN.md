@@ -65,6 +65,33 @@ ratio >= 0.90  -> 交给 DSH 原生 compaction，不重复造轮子
 - 事件快照要记录 `domain`、`confidence_tier`、`reference_weight`；
 - 快照失败不阻塞 compaction；本地 extractive summary 兜底。
 
+### 80% 生产者
+
+已安装 DSH host bundle：
+
+```text
+plugins/context-snapshot-trigger
+```
+
+行为：
+
+```text
+agent/turn-stopping
+  → ctx.tokenMeter.measure(session)
+  → ratio >= 0.80
+  → 最近 80 条 / 最多 40k 字符的事件包
+  → POST /event_snapshot/request
+  → 本地 API 快照 → event_snapshots
+```
+
+保护：
+
+- fire-and-forget，不阻塞当前回复；
+- 10 分钟冷却，且压力至少再涨 0.05 才再发；
+- 超过 95% 不发；
+- 不是全量上下文重复请求；
+- API 失败只返回 skipped，不重试风暴。
+
 ### 不让快照撑爆上下文
 
 在发快照请求前先留预算：
