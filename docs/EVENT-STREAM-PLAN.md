@@ -335,18 +335,21 @@ soulcore/event_streams.py
 2026-11-03 结果：
 
 ```text
-6 个 chunk 都是 new_stream
+6 个 chunk
+2 个 gray_candidate / 4 个 new_stream
+0 个 auto_candidate
 roleplay chunk 只匹配 roleplay loop
 real chunk 只匹配 real loop
 没有跨域误配
 ```
 
-这说明 domain gating 生效，但纯 2-gram 分数偏低，还不足以自动拼接。下一轮需要加入：
+本地 `nomic-embed-text` 已接入，但仅作为候选分数的一部分；没有自动合并任何 stream。  
+下一轮需要加入：
 
-- embedding 相似度；
-- 罕见实体/项目名；
 - 未完成事项匹配；
-- 显式回指（上次/继续/还没）。
+- 显式回指（上次/继续/还没/说好的）；
+- 罕见实体/项目名权重；
+- 2B 只复核 gray candidate。
 
 在加入这些之前，**不会自动合并任何 stream**。
 

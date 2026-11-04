@@ -11,10 +11,16 @@ this module never creates a second scheduler.
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
 import sqlite3
+import urllib.request
 from datetime import date
 from typing import Any
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+EMBED_MODEL = os.environ.get("EMOTIONCORE_EMBED_MODEL", "nomic-embed-text:latest")
 
 ROLEPLAY_RE = re.compile(r"(跑团|扮演|剧情|回合|检定|骰|dm|npc|夜场|旁白|你走进|门楣|金铃|角色卡|主持人)")
 TECH_RE = re.compile(r"(模型|代码|api|配置|部署|上下文|数据库|接口|测试|报错|本地|系统|程序|token|记忆|检索|提示词)")
@@ -60,6 +66,60 @@ def _overlap(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / max(1, min(len(a), len(b)))
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _embed(texts: list[str], *, model: str = EMBED_MODEL, timeout: int = 60) -> list[list[float]] | None:
+    """Local Ollama embedding; purely local, no cloud fallback."""
+    if not texts:
+        return []
+    try:
+        body = json.dumps({"model": model, "input": texts}, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            OLLAMA_URL.rstrip("/") + "/api/embed",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        vectors = payload.get("embeddings")
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            return None
+        return [[float(v) for v in vec] for vec in vectors]
+    except Exception:
+        return None
+
+
+def attach_embeddings(
+    loops: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+    *,
+    model: str = EMBED_MODEL,
+    batch_size: int = 16,
+) -> bool:
+    """Attach local embeddings in-place; returns False when Ollama is unavailable."""
+    items: list[tuple[dict[str, Any], str]] = []
+    for loop in loops:
+        items.append((loop, str(loop.get("text") or "")))
+    for chunk in chunks:
+        items.append((chunk, " ".join([str(chunk.get("summary") or ""), str(chunk.get("signals") or "")])))
+    for start in range(0, len(items), max(1, batch_size)):
+        batch = items[start:start + batch_size]
+        vectors = _embed([text for _, text in batch], model=model)
+        if vectors is None:
+            return False
+        for (obj, _), vec in zip(batch, vectors):
+            obj["embedding"] = vec
+    return True
 
 
 def load_loops(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -131,21 +191,28 @@ def match_chunk(conn: sqlite3.Connection, chunk: dict[str, Any], loops: list[dic
         rare = sim
         lpeople = {str(x) for x in (loop.get("participants") or []) if str(x)}
         people = len(cpeople & lpeople) / max(1, min(len(cpeople), len(lpeople))) if cpeople and lpeople else 0.0
+        emb = 0.0
+        if chunk.get("embedding") and loop.get("embedding"):
+            raw = _cosine(chunk["embedding"], loop["embedding"])
+            # Local sentence embeddings have a high unrelated baseline; stretch
+            # the useful range instead of treating 0.5 cosine as a match.
+            emb = max(0.0, min(1.0, (raw - 0.35) / 0.65))
         try:
             age = max(0, (date.fromisoformat(day) - date.fromisoformat(str(loop.get("last_day") or day))).days)
         except Exception:
             age = 14
         recency = max(0.0, 1.0 - age / 14.0)
         unresolved = 0.10 if str(loop.get("status")) in ("waiting", "paused", "closing") else 0.0
-        score = 0.40 * sim + 0.20 * rare + 0.15 * people + 0.15 * unresolved + 0.10 * recency
+        score = 0.18 * sim + 0.30 * emb + 0.12 * rare + 0.10 * people + 0.15 * unresolved + 0.10 * recency
         if ckey and loop.get("conversation_key"):
-            score += 0.02
+            score += 0.05
         if score <= 0:
             continue
         out.append({
             "thread_id": loop["thread_id"],
             "score": round(min(1.0, score), 3),
             "text_overlap": round(sim, 3),
+            "embedding_similarity": round(emb, 3),
             "participant_overlap": round(people, 3),
             "age_days": age,
             "status": loop["status"],
@@ -159,8 +226,10 @@ def match_chunk(conn: sqlite3.Connection, chunk: dict[str, Any], loops: list[dic
 
 
 def classify_match(score: float) -> str:
+    # Conservative: embeddings are a candidate generator, not an auto-merge
+    # authority. Only a very high score can auto-link.
     if score >= 0.72:
         return "auto_candidate"
-    if score >= 0.50:
+    if score >= 0.40:
         return "gray_candidate"
     return "new_stream"

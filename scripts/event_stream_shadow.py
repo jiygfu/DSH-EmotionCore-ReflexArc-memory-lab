@@ -184,10 +184,13 @@ def main() -> int:
             "max_unresolved": round(max(float(x["unresolved"] or 0) for x in items), 3),
             "max_importance": round(max(float(x["importance"] or 0) for x in items), 3),
         }
+        out.append(chunk)
+
+    embedding_used = event_streams.attach_embeddings(loops, out)
+    for chunk in out:
         chunk["candidates"] = event_streams.match_chunk(conn, chunk, loops)
         best = chunk["candidates"][0]["score"] if chunk["candidates"] else 0.0
         chunk["match_class"] = event_streams.classify_match(best)
-        out.append(chunk)
     conn.close()
 
     out_dir = Path(args.out_dir)
@@ -199,6 +202,7 @@ def main() -> int:
         "generated_at": datetime.now().astimezone().isoformat(),
         "gap_min": args.gap_min,
         "max_items": args.max_items,
+        "embedding_used": bool(embedding_used),
         "chunks": out,
         "stats": {
             "event_class": dict(Counter(x["event_class"] for x in out)),
@@ -213,8 +217,9 @@ def main() -> int:
         f"- chunks：{len(out)}",
         f"- 分类：{json.dumps(payload['stats'], ensure_ascii=False)}",
         f"- 原始消息：{len(rows)}",
+        f"- 本地 embedding：{'nomic-embed-text' if embedding_used else '不可用，已降级为纯词法'}",
         "",
-        "> 只读 shadow；没有写数据库，没有调用 API。",
+        "> 只读 shadow；没有写数据库，没有调用云端 API。",
         "",
         "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 域 | 置信 | 参考权重 | 长期资格 | 候选 | 匹配 | 信号 | 摘要 |",
         "| --- | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
@@ -222,7 +227,7 @@ def main() -> int:
     for x in out:
         conv = "私聊" if str(x["conversation_key"]).startswith("private:") else ("群聊" if str(x["conversation_key"]).startswith("group:") else "未知")
         cand = "；".join(
-            f"{c['thread_id']}({c['score']:.2f},{c['domain']})"
+            f"{c['thread_id']}({c['score']:.2f},{c['domain']},emb={c.get('embedding_similarity',0):.2f})"
             for c in (x.get("candidates") or [])[:2]
         ) or "-"
         lines.append(
