@@ -321,6 +321,35 @@ roleplay chunks:
 
 仍不启用生产写入；先继续校准和做候选匹配。
 
+### Phase 2 shadow：本地候选匹配
+
+新增：
+
+```text
+soulcore/event_streams.py
+  load_loops()          读取现有 thread_loops（跨日标记仍以它为准）
+  match_chunk()         同 conversation_key、跨日、同 domain 的本地候选
+  classify_match()      auto / gray / new_stream
+```
+
+2026-11-03 结果：
+
+```text
+6 个 chunk 都是 new_stream
+roleplay chunk 只匹配 roleplay loop
+real chunk 只匹配 real loop
+没有跨域误配
+```
+
+这说明 domain gating 生效，但纯 2-gram 分数偏低，还不足以自动拼接。下一轮需要加入：
+
+- embedding 相似度；
+- 罕见实体/项目名；
+- 未完成事项匹配；
+- 显式回指（上次/继续/还没）。
+
+在加入这些之前，**不会自动合并任何 stream**。
+
 ## 11. 执行顺序
 
 1. Phase 1：shadow 切 chunk，校准 micro/normal/major。

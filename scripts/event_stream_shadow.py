@@ -17,11 +17,16 @@ import argparse
 import json
 import re
 import sqlite3
+import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from soulcore import event_streams  # noqa: E402
 DEFAULT_DB = ROOT / "data" / "soulcore.db"
 DEFAULT_OUT = ROOT / "reports"
 
@@ -127,7 +132,7 @@ def main() -> int:
     conn = sqlite3.connect("file:" + str(Path(args.db)) + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     rows = load(conn, args.day)
-    conn.close()
+    loops = event_streams.load_loops(conn)
 
     chunks = []
     current: list[sqlite3.Row] = []
@@ -154,7 +159,7 @@ def main() -> int:
         duration = ((end - start).total_seconds() / 60) if start and end else 0
         kind, sig, reason, content_class, long_term_eligible = classify(items, duration)
         participants = sorted({str(x["speaker"] or "") for x in items if x["speaker"]})
-        out.append({
+        chunk = {
             "chunk_id": f"shadow_chunk_{args.day}_{i:03d}",
             "day": args.day,
             "conversation_key": items[0]["conversation_key"],
@@ -178,7 +183,12 @@ def main() -> int:
             "memory_ids": [x["id"] for x in items],
             "max_unresolved": round(max(float(x["unresolved"] or 0) for x in items), 3),
             "max_importance": round(max(float(x["importance"] or 0) for x in items), 3),
-        })
+        }
+        chunk["candidates"] = event_streams.match_chunk(conn, chunk, loops)
+        best = chunk["candidates"][0]["score"] if chunk["candidates"] else 0.0
+        chunk["match_class"] = event_streams.classify_match(best)
+        out.append(chunk)
+    conn.close()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -190,7 +200,10 @@ def main() -> int:
         "gap_min": args.gap_min,
         "max_items": args.max_items,
         "chunks": out,
-        "stats": dict(Counter(x["event_class"] for x in out)),
+        "stats": {
+            "event_class": dict(Counter(x["event_class"] for x in out)),
+            "match_class": dict(Counter(x["match_class"] for x in out)),
+        },
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -203,13 +216,17 @@ def main() -> int:
         "",
         "> 只读 shadow；没有写数据库，没有调用 API。",
         "",
-        "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 域 | 置信 | 参考权重 | 长期资格 | 信号 | 摘要 |",
-        "| --- | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | --- |",
+        "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 域 | 置信 | 参考权重 | 长期资格 | 候选 | 匹配 | 信号 | 摘要 |",
+        "| --- | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
     ]
     for x in out:
         conv = "私聊" if str(x["conversation_key"]).startswith("private:") else ("群聊" if str(x["conversation_key"]).startswith("group:") else "未知")
+        cand = "；".join(
+            f"{c['thread_id']}({c['score']:.2f},{c['domain']})"
+            for c in (x.get("candidates") or [])[:2]
+        ) or "-"
         lines.append(
-            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {x['content_class']} | {x['domain']} | {x['confidence_tier']} | {x['reference_weight']:.2f} | {'是' if x['long_term_eligible'] else '否'} | {','.join(x['signals']) or '-'} | {clean(x['summary'],70)} |"
+            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {x['content_class']} | {x['domain']} | {x['confidence_tier']} | {x['reference_weight']:.2f} | {'是' if x['long_term_eligible'] else '否'} | {cand} | {x['match_class']} | {','.join(x['signals']) or '-'} | {clean(x['summary'],60)} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
