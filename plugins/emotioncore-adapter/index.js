@@ -17,6 +17,7 @@ import path from 'node:path';
 
 const VERSION = '0.1.0';
 const DEFAULT_PREFIX = 'mcp__qq__';
+const WAKE_GAP_MS = 15 * 60 * 1000;
 
 const configSchema = {
   enabled: { type: 'bool', default: true, group: 'EmotionCore', label: '启用适配器', hint: '关闭后只保留通道，不注入 EmotionCore 上下文，也不提供 ec 工具。' },
@@ -435,7 +436,8 @@ export default {
         const mode = String(bot.cfg.injectContextMode || 'first_wake');
         const cacheKey = `${String(ev.chatKey || '')}|${localDay()}`;
         const cache = contextCacheOf(bot);
-        const firstForChat = !cache.has(cacheKey);
+        const cached = cache.get(cacheKey);
+        const firstForChat = !cached || (Date.now() - Number(cached.at || 0) > WAKE_GAP_MS);
         if (bot.cfg.injectInstructions !== false && (mode === 'every_turn' || firstForChat)) {
           ev.hint.push(localInstructions(String(bot.toolPrefix || DEFAULT_PREFIX)));
         }

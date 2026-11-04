@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
 
 from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
 
-VERSION = "0.1.0"
+VERSION = "0.4.0"
 DEFAULT_PORT = int(os.environ.get("EMOTIONCORE_PORT") or os.environ.get("SOULCORE_PORT") or 8765)
 DEFAULT_DB = os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or str(ROOT / "data" / "soulcore.db")
 PERSONA_PATH = Path(os.environ.get("EMOTIONCORE_PERSONA") or (ROOT / "config" / "emotioncore-persona.md"))
@@ -133,17 +133,36 @@ def _persona() -> str:
         return ""
 
 
-def _first_wake(chat_key: str = "default") -> bool:
-    today = datetime.now().astimezone().date().isoformat()
+def _first_wake(chat_key: str = "default", *, gap_minutes: int = 15) -> bool:
+    """First wake per chat, or after a real idle gap.
+
+    A DSH session switch is not exposed to the before-turn hook, so an idle gap
+    is the safe proxy; exact session ids can be wired later without changing
+    the handoff payload.
+    """
+    now = datetime.now().astimezone()
+    today = now.date().isoformat()
     key = str(chat_key or "default")
     try:
         data = json.loads(WAKE_STATE.read_text(encoding="utf-8"))
     except Exception:
         data = {}
     chats = data.get("chats") if isinstance(data.get("chats"), dict) else {}
-    if chats.get(key) == today:
+    prev = chats.get(key)
+    if isinstance(prev, dict):
+        same_day = str(prev.get("day") or "") == today
+        try:
+            last = datetime.fromisoformat(str(prev.get("at") or ""))
+            if last.tzinfo is None:
+                last = last.astimezone()
+        except Exception:
+            last = None
+        if same_day and last is not None and (now - last).total_seconds() < gap_minutes * 60:
+            return False
+    elif prev == today:
+        # migrate old string form; treat as recent once, then use timestamp
         return False
-    chats[key] = today
+    chats[key] = {"day": today, "at": now.isoformat()}
     WAKE_STATE.parent.mkdir(parents=True, exist_ok=True)
     WAKE_STATE.write_text(
         json.dumps({"chats": chats, "at": db.localnow()}, ensure_ascii=False),

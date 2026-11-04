@@ -13,7 +13,9 @@
 
 ## 已修复
 
-- `AGENTS.local.md` 互动规则改为设置页「人格提示词」编辑；保存时同步两份来源，并保留 `.bak-settings-*` 备份。
+- `config/emotioncore-persona.md` 作为唯一可编辑源；`AGENTS.local.md` 由设置页生成，保留 `.bak-settings-*` 备份。
+- 设置页可列出 `personas/*.md`，支持载入/另存；旧「蓝色大肥鱼」预设可切换，但不会自动覆盖当前人格。
+- `AGENTS.local.md` 互动规则改为设置页「人格提示词」编辑；保存时同步两份来源。
 - `handoff.py` 增加：
   - `【这是新会话的第一轮】`
   - `创建新会话 = 刚睡醒`
@@ -43,7 +45,7 @@ QQ 会话实测：49 次 `[EmotionCore]` 注入，约 55k 字符，平均 1.1k/�
 ## 仍然存在的边界
 
 - 同一 chat 在同一天内重建 session，目前没有 session id 可用于再次触发 handoff；下一步应从 onebot event 传入 session id，或在 `/reset` 时清理 wake 标记。
-- `config/emotioncore-persona.md` 与 `AGENTS.local.md` 仍物理存在两份，但设置页保存会同步；如果要彻底单源，应让 AGENTS 成为生成文件或软链。
+- `config/emotioncore-persona.md` 是唯一编辑源；`AGENTS.local.md` 是 DSH 启动需要的生成副本。不要直接编辑 AGENTS，统一走设置页。
 - 历史备份：
   - `workspace/AGENTS.local.md.before-emotioncore-persona`：旧详细蓝色大肥鱼人格（8449 bytes）
   - `personas/蓝色大肥鱼.md`：旧预设

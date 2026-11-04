@@ -27,6 +27,8 @@ const STATE_DIR = process.env.SURFCORE_STATE_DIR || path.join(process.env.USERPR
 const SETTINGS_PATH = path.join(DATA, 'soul-bridge-settings.json')
 const PERSONA_PATH = path.join(ROOT, 'config', 'emotioncore-persona.md')
 const AGENTS_PATH = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'workspace', 'AGENTS.local.md')
+const PERSONAS_DIR = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'personas')
+const PERSONA_HEADER = '# 人格来自 EmotionCore（本地人格层）\n\n'
 const VERSION_PATH = path.join(ROOT, 'VERSION')
 const CALL_LOG = path.join(DATA, 'memory-tool-calls.jsonl')
 const LAYER_CALL_LOG = path.join(DATA, 'memory-layer-calls.jsonl')
@@ -141,6 +143,27 @@ function cleanSettings(input) {
     else out[key] = String(value).slice(0, 500)
   }
   return { ...DEFAULTS, ...out }
+}
+
+async function personaNames() {
+  try {
+    const names = await readdir(PERSONAS_DIR)
+    return names.filter((n) => n.endsWith('.md')).map((n) => n.slice(0, -3)).sort()
+  } catch {
+    return []
+  }
+}
+
+async function persistPersona(text) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  for (const [src, name] of [[PERSONA_PATH, 'persona'], [AGENTS_PATH, 'agents']]) {
+    try {
+      const old = await readFile(src, 'utf8')
+      await writeFile(`${src}.bak-settings-${stamp}`, old, 'utf8')
+    } catch {}
+  }
+  await writeFile(PERSONA_PATH, text + '\n', 'utf8')
+  await writeFile(AGENTS_PATH, PERSONA_HEADER + text + '\n', 'utf8')
 }
 
 async function loadSettings() {
@@ -550,7 +573,7 @@ async function state(ctx) {
   const toolRegistered = Boolean(tools?.get?.('soulcore_memory'))
   const statsResult = await runPython(settings, ['memory-stats'], 20000)
   const memory = parseJsonOutput(statsResult)
-  let version = '0.3.1'
+  let version = '0.4.0'
   try { version = (await readFile(VERSION_PATH, 'utf8')).trim() || version } catch {}
   return {
     ok: true,
@@ -560,6 +583,7 @@ async function state(ctx) {
     settings,
     persona: await readFile(PERSONA_PATH, 'utf8').catch(() => ''),
     personaSource: { personaPath: PERSONA_PATH, agentsPath: AGENTS_PATH },
+    personaPresets: await personaNames(),
     toolRegistered,
     fish: await fishStatus(),
     db: await fileInfo(settings.dbPath),
@@ -595,21 +619,34 @@ async function action(ctx, body) {
   if (kind === 'persona') {
     const text = String(body?.persona || '').trim().slice(0, 20000)
     if (!text) return { ok: false, error: '人格提示词为空' }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    for (const [src, name] of [[PERSONA_PATH, 'persona'], [AGENTS_PATH, 'agents']]) {
-      try {
-        const old = await readFile(src, 'utf8')
-        await writeFile(`${src}.bak-settings-${stamp}`, old, 'utf8')
-      } catch {}
-    }
-    const header = '# 人格来自 EmotionCore（本地人格层）\n\n'
-    await writeFile(PERSONA_PATH, text + '\n', 'utf8')
-    await writeFile(AGENTS_PATH, header + text + '\n', 'utf8')
+    await persistPersona(text)
     return {
       ok: true,
       persona: text,
       message: '人格提示词已保存；下一次新会话/睡醒时加载 AGENTS.local.md',
     }
+  }
+  if (kind === 'persona-load') {
+    const name = path.basename(String(body?.name || '')).replace(/\.md$/i, '')
+    if (!name) return { ok: false, error: '缺少人格预设名' }
+    let text = ''
+    try {
+      text = await readFile(path.join(PERSONAS_DIR, `${name}.md`), 'utf8')
+    } catch {
+      return { ok: false, error: `找不到人格预设：${name}` }
+    }
+    text = text.trim().slice(0, 20000)
+    if (!text) return { ok: false, error: '人格预设为空' }
+    await persistPersona(text)
+    return { ok: true, persona: text, message: `已切换到人格：${name}` }
+  }
+  if (kind === 'persona-save-as') {
+    const name = path.basename(String(body?.name || '')).replace(/[\\/:*?"<>|]/g, '').replace(/\.md$/i, '').trim()
+    const text = String(body?.persona || '').trim().slice(0, 20000)
+    if (!name || !text) return { ok: false, error: '需要人格名和内容' }
+    await mkdir(PERSONAS_DIR, { recursive: true })
+    await writeFile(path.join(PERSONAS_DIR, `${name}.md`), text + '\n', 'utf8')
+    return { ok: true, name, message: `已保存人格预设：${name}` }
   }
   if (kind === 'capability') {
     const key = String(body.key || '')

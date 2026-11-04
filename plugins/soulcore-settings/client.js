@@ -163,6 +163,8 @@ window.__ModuleLoader__.load({
       const [personQq, setPersonQq] = React.useState('')
       const [context, setContext] = React.useState(null)
       const [persona, setPersona] = React.useState('')
+      const [personaPick, setPersonaPick] = React.useState('')
+      const [personaName, setPersonaName] = React.useState('')
 
       const refresh = React.useCallback(async () => {
         setBusy('refresh')
@@ -171,6 +173,7 @@ window.__ModuleLoader__.load({
           setData(next)
           setDraft(next.settings || {})
           setPersona(next.persona || '')
+          setPersonaPick((next.personaPresets || [])[0] || '')
         } catch (error) {
           setNotice({ kind: 'err', text: String(error?.message || error) })
         } finally {
@@ -408,6 +411,29 @@ window.__ModuleLoader__.load({
             style: { ...styles.input, width: '100%', minHeight: 220, lineHeight: 1.6, resize: 'vertical' },
             onChange: (e) => setPersona(e.target.value),
           }),
+          h(Row, { name: '切换预设', desc: '从 personas 目录载入；会覆盖当前人格和 AGENTS，先确认。' },
+            h('select', {
+              value: personaPick, disabled: !!busy,
+              style: { ...styles.input, width: 180 },
+              onChange: (e) => setPersonaPick(e.target.value),
+            }, (data?.personaPresets || []).map((name) => h('option', { value: name }, name))),
+            h('button', {
+              style: styles.button2, disabled: !!busy || !personaPick,
+              onClick: () => {
+                if (!window.confirm(`载入人格「${personaPick}」？会覆盖当前人格与 AGENTS。`)) return
+                void doAction('persona-load', { name: personaPick })
+              },
+            }, '载入')),
+          h(Row, { name: '另存为预设', desc: '保存到 ~/.dsh/dsh-onebot-qq/personas/<名字>.md。' },
+            h('input', {
+              value: personaName, placeholder: '例如 蓝色大肥鱼',
+              style: { ...styles.input, width: 180 }, disabled: !!busy,
+              onChange: (e) => setPersonaName(e.target.value),
+            }),
+            h('button', {
+              style: styles.button2, disabled: !!busy || !personaName.trim() || !persona.trim(),
+              onClick: () => void doAction('persona-save-as', { name: personaName, persona }),
+            }, '另存')),
           h('div', { style: styles.buttonRow },
             h('button', {
               style: styles.button2, disabled: !!busy || !persona.trim(),
