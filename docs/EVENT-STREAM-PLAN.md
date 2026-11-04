@@ -156,6 +156,17 @@ thread_loops
 - 若 stream 没有未完成项，不创建 loop；
 - 旧 `episodes`/L5 仍读 `thread_loops`，不需要新注入层。
 
+游戏/扮演线程额外约束：
+
+```text
+thread_loops.domain = roleplay
+anchor_at = NULL              # 不进入现实定时提醒
+fiction_anchor_at = ...       # 仅用于游戏内回忆
+real_followup_allowed = false
+```
+
+现有跨日定时器只处理 `domain=real` 且 `anchor_at` 到期的 loop；游戏内“明天/下次”不会在现实中提醒。
+
 ## 4. 本地匹配
 
 先规则/向量，2B 只做模糊候选复核。
