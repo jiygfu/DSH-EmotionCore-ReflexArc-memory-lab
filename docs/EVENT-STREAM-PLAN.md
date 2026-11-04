@@ -41,9 +41,29 @@ ratio >= 0.90  -> 交给 DSH 原生 compaction，不重复造轮子
 - 以 `pressureTokens` 为准，`surfaceTokens` 只做诊断；
 - `contextWindow` 从当前 route 读取，不写死；
 - 每个 session 只触发一次，或每 N tokens/10 分钟去抖；
-- 80% 只做本地整理，不做线上事件判断；
+- 80% 是**原生 compaction 之前的事件快照点**，不是另起一套压缩；
 - 不阻塞当前回复，异步执行；
 - 原生 compaction 仍负责真正的上下文压缩，我们不替代它。
+
+### 80% 预压缩事件快照
+
+利用 API 自己即将压缩的时机，在压缩前留下事件判定材料：
+
+```text
+80% pressure
+  → 本地收集：当前未完成项、最近 chunks、pinned memories
+  → 可选：一次性 structured event snapshot（小包，不是全量 context）
+  → 原生 compaction（API 自己压缩）
+  → 本地用 compaction summary + 快照整理事件
+```
+
+原则：
+
+- **不做一个 80% 全量上下文的额外调用**；用事件包，避免把上下文费用翻倍；
+- 事件包只含最近相关 chunks、未完成项、具体记忆摘录；
+- 如果原生 compaction summary 可用，优先复用；事件包调用只是补充；
+- 事件快照要记录 `domain`、`confidence_tier`、`reference_weight`；
+- 快照失败不阻塞 compaction；本地 extractive summary 兜底。
 
 ## 3. 事件定义
 
@@ -83,6 +103,39 @@ event_class         最多 normal（娱乐归档）
 - 只保留事件摘要和可查文本。
 
 判定必须同时避免误伤技术讨论：出现较多 `模型/代码/API/上下文/数据库/配置` 时，不按扮演处理。
+
+### 游戏记忆字段
+
+游戏/跑团内容仍然要可回忆，但降低置信度和人格效力：
+
+```text
+domain             real / roleplay
+content_class      roleplay_entertainment
+signal_scope       fiction
+confidence_tier    比普通对话低一级
+reference_weight   0.5–0.7（仍可检索、可回忆）
+long_term_eligible false
+personality_eligible false
+emotion_boost      fun / curiosity（适度提高，不变成长期人格承诺）
+```
+
+解释：
+
+- 游戏里的承诺、好奇、知识、长期待办，**不是完全丢弃**；
+- 检索时可以回忆起“这是在游戏里发生的”；
+- 置信度比现实事件低一级，避免把虚构承诺当成现实承诺；
+- 保留参考权重，保证将来能准确调出；
+- 游戏期间的快乐/好奇可以适度提升情绪权重，但不改变长期人格方向。
+
+绑定表建议加：
+
+```text
+domain
+confidence_tier
+reference_weight
+personality_eligible
+signal_scope
+```
 
 ## 3.5 跨天与未完成标记
 
@@ -244,8 +297,15 @@ scripts/event_stream_shadow.py
 
 ```text
 1 micro / 3 normal / 2 major
-roleplay chunks: normal + long_term_eligible=false
-技术讨论 chunk: major + long_term_eligible=true
+roleplay chunks:
+  domain=roleplay
+  content_class=roleplay_entertainment
+  confidence_tier=low
+  reference_weight=0.60
+  long_term_eligible=false
+  personality_eligible=false
+  emotion_boost=fun/curiosity
+技术讨论 chunk: major + domain=real + long_term_eligible=true
 ```
 
 仍不启用生产写入；先继续校准和做候选匹配。

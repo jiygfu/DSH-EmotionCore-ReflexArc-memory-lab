@@ -165,9 +165,14 @@ def main() -> int:
             "participants": participants,
             "event_class": kind,
             "content_class": content_class,
+            "domain": "roleplay" if content_class == "roleplay_entertainment" else "real",
             "long_term_eligible": long_term_eligible,
+            "personality_eligible": bool(long_term_eligible and content_class != "roleplay_entertainment"),
+            "confidence_tier": "low" if content_class == "roleplay_entertainment" else ("medium" if kind == "major" else "low"),
+            "reference_weight": 0.60 if content_class == "roleplay_entertainment" else (1.0 if kind == "major" else (0.30 if kind == "micro" else 0.75)),
+            "emotion_boost": ["fun", "curiosity"] if content_class == "roleplay_entertainment" else [],
             "signals": sig,
-            "signal_scope": "fiction" if not long_term_eligible and content_class == "roleplay_entertainment" else "real",
+            "signal_scope": "fiction" if content_class == "roleplay_entertainment" else "real",
             "reason": reason,
             "summary": extractive_summary(items),
             "memory_ids": [x["id"] for x in items],
@@ -198,13 +203,13 @@ def main() -> int:
         "",
         "> 只读 shadow；没有写数据库，没有调用 API。",
         "",
-        "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 长期资格 | 信号 | 摘要 |",
-        "| --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
+        "| chunk | 时间 | 会话 | 条数 | 分类 | 内容类型 | 域 | 置信 | 参考权重 | 长期资格 | 信号 | 摘要 |",
+        "| --- | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | --- |",
     ]
     for x in out:
         conv = "私聊" if str(x["conversation_key"]).startswith("private:") else ("群聊" if str(x["conversation_key"]).startswith("group:") else "未知")
         lines.append(
-            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {x['content_class']} | {'是' if x['long_term_eligible'] else '否'} | {','.join(x['signals']) or '-'} | {clean(x['summary'],80)} |"
+            f"| {x['chunk_id']} | {clean(x['start'],19)} → {clean(x['end'],19)} | {conv} | {x['items']} | {x['event_class']} | {x['content_class']} | {x['domain']} | {x['confidence_tier']} | {x['reference_weight']:.2f} | {'是' if x['long_term_eligible'] else '否'} | {','.join(x['signals']) or '-'} | {clean(x['summary'],70)} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
