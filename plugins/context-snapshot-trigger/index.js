@@ -5,6 +5,13 @@
  * of recent messages to EmotionCore; the local service makes the single online
  * snapshot request and verifies anchors afterwards.
  */
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+const SETTINGS_PATH = path.join(ROOT, 'data', 'soul-bridge-settings.json')
+
 const DEFAULTS = {
   enabled: true,
   threshold: 0.80,
@@ -23,6 +30,22 @@ function textOf(message) {
     if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text)
   }
   return parts.join('\n').trim()
+}
+
+async function liveSettings(cfg) {
+  try {
+    const raw = JSON.parse(await readFile(SETTINGS_PATH, 'utf8'))
+    return {
+      ...cfg,
+      enabled: raw.snapshotEnabled ?? cfg.enabled,
+      threshold: Number(raw.snapshotThreshold ?? cfg.threshold),
+      hardStop: Number(raw.snapshotHardStop ?? cfg.hardStop),
+      cooldownMs: Number(raw.snapshotCooldownMs ?? cfg.cooldownMs),
+      maxMessages: Number(raw.snapshotMaxMessages ?? cfg.maxMessages),
+    }
+  } catch {
+    return cfg
+  }
 }
 
 function pressureOf(agent, meter) {
@@ -53,20 +76,22 @@ export function apply(ctx, config = {}) {
   let disposed = false
 
   async function maybeSnapshot(agent) {
+    const effective = await liveSettings(cfg)
+    if (effective.enabled !== true) return
     const p = pressureOf(agent, meter)
     if (!p) return
-    if (p.ratio < Number(cfg.threshold) || p.ratio > Number(cfg.hardStop)) return
+    if (p.ratio < Number(effective.threshold) || p.ratio > Number(effective.hardStop)) return
     const sid = String(agent?.session?.id || '')
     if (!sid) return
     const now = Date.now()
     const prev = last.get(sid)
-    if (prev && now - prev.at < Number(cfg.cooldownMs) && p.ratio < prev.ratio + 0.05) return
+    if (prev && now - prev.at < Number(effective.cooldownMs) && p.ratio < prev.ratio + 0.05) return
     last.set(sid, { at: now, ratio: p.ratio })
 
     const messages = []
     try {
       const all = agent.session.deriveMessages()
-      for (const message of all.slice(-Math.max(4, Number(cfg.maxMessages) || 40))) {
+      for (const message of all.slice(-Math.max(4, Number(effective.maxMessages) || 40))) {
         const role = String(message?.role || '')
         if (role !== 'user' && role !== 'assistant') continue
         const text = textOf(message)
@@ -103,9 +128,17 @@ export function apply(ctx, config = {}) {
     // Fire-and-forget: never delay or block the turn.
     void maybeSnapshot(agent)
   })
+  // Catch pressure that crosses 80% only when the next request is derived,
+  // before native compaction at 90%. The packet is copied synchronously before
+  // the waterfall continues.
+  const offPre = ctx.on('agent/pre-step', (payload, next) => {
+    if (!disposed) void maybeSnapshot(payload?.agent)
+    return typeof next === 'function' ? next() : undefined
+  })
   return () => {
     disposed = true
     if (typeof off === 'function') off()
+    if (typeof offPre === 'function') offPre()
     last.clear()
   }
 }

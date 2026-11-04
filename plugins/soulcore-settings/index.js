@@ -62,6 +62,11 @@ const DEFAULTS = {
   snowlumaAutoStart: true,
   sleepAuto: true,
   sleepHour: 4,
+  snapshotEnabled: true,
+  snapshotThreshold: 0.80,
+  snapshotHardStop: 0.95,
+  snapshotMaxMessages: 80,
+  snapshotCooldownMs: 600000,
 }
 
 async function sidecarPath() {
@@ -113,6 +118,12 @@ function cleanSettings(input) {
     if (value === undefined) continue
     if (typeof DEFAULTS[key] === 'boolean') out[key] = value === true
     else if (key === 'sleepHour') out[key] = Math.max(0, Math.min(23, Number(value) || 0))
+    else if (key === 'snapshotThreshold' || key === 'snapshotHardStop') {
+      const n = Number(value)
+      out[key] = Number.isFinite(n) ? Math.max(0.5, Math.min(0.99, n)) : DEFAULTS[key]
+    }
+    else if (key === 'snapshotMaxMessages') out[key] = Math.max(4, Math.min(200, Number(value) || DEFAULTS[key]))
+    else if (key === 'snapshotCooldownMs') out[key] = Math.max(60000, Math.min(3600000, Number(value) || DEFAULTS[key]))
     else if (typeof DEFAULTS[key] === 'number') out[key] = Math.max(1, Math.min(120000, Number(value) || DEFAULTS[key]))
     else out[key] = String(value).slice(0, 500)
   }

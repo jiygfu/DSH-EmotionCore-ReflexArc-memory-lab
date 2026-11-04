@@ -263,6 +263,51 @@ window.__ModuleLoader__.load({
               }, busy === 'sleep' ? '整理中…' : '完整睡眠整理'))),
         ),
 
+        h('div', { style: styles.section },
+          h('div', { style: styles.sectionTitle }, '上下文快照 / 记忆整理'),
+          h('div', { style: styles.sectionHint }, '80% 是 pre-compaction 快照点；先让 API 给出事件快照，再由本地 anchor 校验。这里改的是本地触发阈值，不改原生 compaction 的 90% 安全阈值。'),
+          h(Row, { first: true, name: '启用 80% 快照', desc: '关闭后不触发 API 快照；仍保留本地整理。' },
+            h(Toggle, {
+              checked: settings.snapshotEnabled !== false, disabled: !!busy,
+              onChange: (v) => { set('snapshotEnabled', v); void doAction('save', { settings: { ...settings, snapshotEnabled: v } }) },
+            })),
+          h(Row, { name: '预警阈值', desc: '0.50–0.99；默认 0.80。原生 compaction 在 0.90 才运行，留出快照窗口。' },
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+              h('input', {
+                type: 'number', min: 0.5, max: 0.99, step: 0.01,
+                value: settings.snapshotThreshold ?? 0.80,
+                style: { ...styles.input, width: 90 }, disabled: !!busy,
+                onChange: (e) => set('snapshotThreshold', Number(e.target.value)),
+              }),
+              h('button', {
+                style: styles.button2, disabled: !!busy,
+                onClick: () => void doAction('save', { settings: { ...settings, snapshotThreshold: Number(settings.snapshotThreshold ?? 0.80) } }),
+              }, '保存阈值'))),
+          h(Row, { name: '快照消息上限', desc: '最近多少条消息进入事件包；默认 80。越大越完整，API 成本越高。' },
+            h('input', {
+              type: 'number', min: 4, max: 200, value: settings.snapshotMaxMessages ?? 80,
+              style: { ...styles.input, width: 90 }, disabled: !!busy,
+              onChange: (e) => set('snapshotMaxMessages', Number(e.target.value)),
+            })),
+          h(Row, { name: '冷却时间', desc: '同一会话两次快照的最小间隔；默认 10 分钟。' },
+            h('input', {
+              type: 'number', min: 60000, max: 3600000, step: 60000, value: settings.snapshotCooldownMs ?? 600000,
+              style: { ...styles.input, width: 120 }, disabled: !!busy,
+              onChange: (e) => set('snapshotCooldownMs', Number(e.target.value)),
+            })),
+          h(Row, { name: '保存快照设置', desc: '阈值、消息上限、冷却时间一起写入本地设置；下一次压力检查生效。' },
+            h('button', {
+              style: styles.button2, disabled: !!busy,
+              onClick: () => void doAction('save', {
+                settings: {
+                  ...settings,
+                  snapshotThreshold: Number(settings.snapshotThreshold ?? 0.80),
+                  snapshotMaxMessages: Number(settings.snapshotMaxMessages ?? 80),
+                  snapshotCooldownMs: Number(settings.snapshotCooldownMs ?? 600000),
+                },
+              }),
+            }, '保存'))),
+
         h('div', { style: styles.grid },
           h('div', { style: styles.card }, h('div', { style: styles.label }, '长期记忆'), h('div', { style: { ...styles.value, color: memCount ? C.ok : C.warn } }, memCount ? `${memCount} 条` : '—')),
           h('div', { style: styles.card }, h('div', { style: styles.label }, 'FTS5 索引'), h('div', { style: { ...styles.value, color: ftsOk ? C.ok : C.warn } }, ftsOk ? `${memory.fts_rows} 条` : '未建立')),

@@ -65,6 +65,29 @@ ratio >= 0.90  -> 交给 DSH 原生 compaction，不重复造轮子
 - 事件快照要记录 `domain`、`confidence_tier`、`reference_weight`；
 - 快照失败不阻塞 compaction；本地 extractive summary 兜底。
 
+### 设置页
+
+`soulcore-settings` 的「上下文快照 / 记忆整理」区块可调：
+
+```text
+snapshotEnabled
+snapshotThreshold      默认 0.80，范围 0.50–0.99
+snapshotMaxMessages    默认 80
+snapshotCooldownMs     默认 600000
+```
+
+设置写入 `data/soul-bridge-settings.json`；`context-snapshot-trigger` 每次检查时
+读取该文件，所以改完无需重启插件。
+
+### 不会错过 80% 窗口
+
+- 快照阈值默认 0.80；
+- 原生 compaction 的 `thresholdRatio` 调为 0.90，留出约 10% 缓冲；
+- 插件同时监听 `agent/turn-stopping` 和 `agent/pre-step`，避免只在回复结束后检查；
+- `agent/pre-step` 先复制事件包，再把控制权交回；不阻塞原请求；
+- 同一 session 10 分钟冷却，压力至少再涨 0.05 才重发；
+- 极端情况下单条消息直接把压力推过 0.95，快照会跳过，由原生 compaction 兜底，不制造重复请求。
+
 ### 80% 生产者
 
 已安装 DSH host bundle：
