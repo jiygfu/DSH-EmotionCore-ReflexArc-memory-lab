@@ -70,6 +70,29 @@ event_snapshots
   payload_json, created_at
 ```
 
+## Local verification
+
+`anchor_quotes` are mapped back to raw memories before any link is written:
+
+```text
+retrieval.search_memories(quote)
+  → exact / token / local embedding score
+  → verified / weak / unmatched
+```
+
+- `verified` may become `event_memory_links`;
+- `weak` stays a candidate only;
+- `unmatched` keeps the raw snapshot, but does not create an event;
+- roleplay gets `effective_confidence=confidence*0.8`,
+  `confidence_tier=low`, `personality_eligible=false`,
+  `reference_weight=0.60`.
+
+Read-only probe:
+
+```powershell
+python scripts/event_snapshot_shadow.py --snapshot-id <id>
+```
+
 ## Local next step
 
 1. Map `anchor_quotes` to raw memory IDs (local lexical/embedding match).

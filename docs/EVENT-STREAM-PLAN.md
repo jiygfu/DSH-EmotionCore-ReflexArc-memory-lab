@@ -65,6 +65,20 @@ ratio >= 0.90  -> 交给 DSH 原生 compaction，不重复造轮子
 - 事件快照要记录 `domain`、`confidence_tier`、`reference_weight`；
 - 快照失败不阻塞 compaction；本地 extractive summary 兜底。
 
+### 不让快照撑爆上下文
+
+在发快照请求前先留预算：
+
+```text
+input_budget = contextWindow - pressureTokens - output_reserve
+```
+
+- `output_reserve` 至少 1–2k tokens；
+- 事件包按预算裁剪，只保留最相关的 chunks / 未完成项 / 锚点；
+- 预算不足就跳过结构化快照，使用本地摘要；
+- 80% 之后不再发大请求，避免把上下文推到 overflow；
+- 每个压力 epoch 只发一次，失败不重试风暴。
+
 ## 3. 事件定义
 
 ### session chunk
@@ -166,6 +180,32 @@ real_followup_allowed = false
 ```
 
 现有跨日定时器只处理 `domain=real` 且 `anchor_at` 到期的 loop；游戏内“明天/下次”不会在现实中提醒。
+
+## 3.6 快照落地前的本地校验
+
+API 快照不是直接入账，先做本地证据校验：
+
+```text
+event.anchor_quotes
+  → retrieval.search_memories
+  → 本地 exact / token / embedding 分数
+  → verified / weak / unmatched
+```
+
+- `verified`：quote 能在 raw memory 中找到，才允许写 `event_memory_links`；
+- `weak`：保留为候选，不自动绑定；
+- `unmatched`：只存快照，不写事件；
+- roleplay 的 effective_confidence 再降一级，reference_weight=0.60；
+- API 摘要不能替代 anchor 证据。
+
+已新增只读 shadow：
+
+```text
+soulcore/event_snapshot_bind.py
+scripts/event_snapshot_shadow.py
+```
+
+单条 fixture 测试中，exact quote 的绑定分数为 1.00，状态 `verified`；没有写生产绑定。
 
 ## 4. 本地匹配
 
