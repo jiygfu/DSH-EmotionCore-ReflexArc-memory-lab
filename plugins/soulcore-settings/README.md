@@ -16,8 +16,10 @@ host API: /soulcore-settings/api/state
 
 - **上下文占用（QQ 线 · 实时）**：当前 prompt / 占窗口 / 每轮增长 / 累计 prompt / 缓存命中 / 脚手架占比，
   5 秒刷新；下方是最近 8 次请求的轮次、step、prompt、新输入、缓存、输出
+- **API 来源**：从 DSH `llm.listProviders()/listModels()` 选择 provider/model；
+  切换前先执行睡眠整理，随后清空全部 QQ 会话映射并重置唤醒状态
 - **人格提示词**：编辑唯一源 `config/emotioncore-persona.md`，保存时生成 AGENTS；
-  支持从 `personas/*.md` 载入和另存多个人格预设
+  支持从 `personas/*.md` 载入、另存、新建和重命名人格预设
 - **上下文快照**：80% 预警阈值、消息上限、冷却时间
 - **作息问候**：早安/晚安开关、时间、文案
 - 启动链：SnowLuma、DSH OneBot 连接、EmotionCore service、worker、睡眠

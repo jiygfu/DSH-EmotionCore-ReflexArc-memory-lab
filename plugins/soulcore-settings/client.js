@@ -165,6 +165,8 @@ window.__ModuleLoader__.load({
       const [persona, setPersona] = React.useState('')
       const [personaPick, setPersonaPick] = React.useState('')
       const [personaName, setPersonaName] = React.useState('')
+      const [apiProvider, setApiProvider] = React.useState('')
+      const [apiModel, setApiModel] = React.useState('')
 
       const refresh = React.useCallback(async () => {
         setBusy('refresh')
@@ -174,6 +176,11 @@ window.__ModuleLoader__.load({
           setDraft(next.settings || {})
           setPersona(next.persona || '')
           setPersonaPick((next.personaPresets || [])[0] || '')
+          const current = next.models?.current || {}
+          const firstProvider = current.provider || next.models?.providers?.[0]?.id || ''
+          setApiProvider(firstProvider)
+          const provider = (next.models?.providers || []).find((p) => p.id === firstProvider)
+          setApiModel(current.model || provider?.models?.[0]?.id || '')
         } catch (error) {
           setNotice({ kind: 'err', text: String(error?.message || error) })
         } finally {
@@ -402,6 +409,39 @@ window.__ModuleLoader__.load({
                 },
               }),
             }, '保存'))),
+
+        h('div', { style: styles.section },
+          h('div', { style: styles.sectionTitle }, 'API 来源'),
+          h('div', { style: styles.sectionHint },
+            `当前：${data?.models?.current?.provider || '—'} / ${data?.models?.current?.model || '—'}。`
+            + ' 切换会先执行睡眠整理，再清空全部 QQ 会话映射；下一条消息会开新会话。'),
+          h(Row, { name: 'Provider', desc: data?.models?.error || '来自 DSH llm.listProviders()' },
+            h('select', {
+              value: apiProvider, disabled: !!busy,
+              style: { ...styles.input, width: 220 },
+              onChange: (e) => {
+                const id = e.target.value
+                setApiProvider(id)
+                const p = (data?.models?.providers || []).find((x) => x.id === id)
+                setApiModel(p?.models?.[0]?.id || '')
+              },
+            }, (data?.models?.providers || []).map((p) => h('option', { value: p.id }, `${p.name} (${p.id})`)))),
+          h(Row, { name: 'Model', desc: '来自该 provider 的 listModels()；ark-code-latest 应包含 deepseek-v4.1-flash。' },
+            h('select', {
+              value: apiModel, disabled: !!busy,
+              style: { ...styles.input, width: 300 },
+              onChange: (e) => setApiModel(e.target.value),
+            }, ((data?.models?.providers || []).find((p) => p.id === apiProvider)?.models || [])
+              .map((m) => h('option', { value: m.id }, `${m.name} (${m.id})`)))),
+          h('div', { style: styles.buttonRow },
+            h('button', {
+              style: styles.button2,
+              disabled: !!busy || !apiProvider || !apiModel,
+              onClick: () => {
+                if (!window.confirm(`切换 API 到 ${apiProvider} / ${apiModel}？\n\n会先执行睡眠整理，再清空全部 QQ 会话映射；下一条消息开新会话。`)) return
+                void doAction('model-switch', { provider: apiProvider, model: apiModel })
+              },
+            }, busy === 'model-switch' ? '睡眠整理并切换中…' : '切换 API 并初始化会话'))),
 
         h('div', { style: styles.section },
           h('div', { style: styles.sectionTitle }, '人格提示词'),

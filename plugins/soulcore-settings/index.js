@@ -29,6 +29,7 @@ const PERSONA_PATH = path.join(ROOT, 'config', 'emotioncore-persona.md')
 const AGENTS_PATH = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'workspace', 'AGENTS.local.md')
 const PERSONAS_DIR = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'personas')
 const PERSONA_HEADER = '# 人格来自 EmotionCore（本地人格层）\n\n'
+const CONTEXT_EPOCH_PATH = path.join(process.env.USERPROFILE || '', '.dsh', 'dsh-onebot-qq', 'state', 'emotioncore-context-epoch.json')
 const VERSION_PATH = path.join(ROOT, 'VERSION')
 const CALL_LOG = path.join(DATA, 'memory-tool-calls.jsonl')
 const LAYER_CALL_LOG = path.join(DATA, 'memory-layer-calls.jsonl')
@@ -164,6 +165,82 @@ async function persistPersona(text) {
   }
   await writeFile(PERSONA_PATH, text + '\n', 'utf8')
   await writeFile(AGENTS_PATH, PERSONA_HEADER + text + '\n', 'utf8')
+}
+
+let modelCatalogCache = { at: 0, value: null }
+
+async function modelCatalog(ctx) {
+  if (modelCatalogCache.value && Date.now() - modelCatalogCache.at < 60_000) return modelCatalogCache.value
+  const out = { current: null, providers: [], error: '' }
+  try {
+    const def = ctx.get('agentDefaultModel')
+    if (def?.currentSelection) out.current = def.currentSelection()
+    const llm = ctx.get('llm')
+    if (!llm?.listProviders) {
+      out.error = 'llm 服务不可用'
+      return out
+    }
+    const providers = await llm.listProviders()
+    out.providers = await Promise.all((providers || []).map(async (p) => {
+      const id = String(p?.id || p?.provider || p?.name || '')
+      let models = []
+      try {
+        models = await llm.listModels(id)
+      } catch {
+        try { models = await llm.listModels() } catch {}
+      }
+      return {
+        id,
+        name: String(p?.name || p?.label || id),
+        models: (models || []).map((m) => ({
+          id: String(m?.id || m?.model || m?.name || ''),
+          name: String(m?.name || m?.label || m?.id || m?.model || ''),
+          contextWindow: Number(m?.contextWindow || m?.context_window || 0) || null,
+        })).filter((m) => m.id),
+      }
+    }))
+  } catch (e) {
+    out.error = String(e?.message || e)
+  }
+  modelCatalogCache = { at: Date.now(), value: out }
+  return out
+}
+
+async function resetQqSessions(ctx) {
+  const origin = ctx.get('webServer')?.getOrigin?.()
+  if (!origin) return { ok: false, error: 'webServer origin 不可用' }
+  const res = await fetch(`${origin}/qq-console/action`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      rpcId: `model-switch-${Date.now()}`,
+      method: 'action',
+      payload: { id: 'clear-qq-sessions', confirm: true },
+    }),
+  })
+  const body = await res.json().catch(() => ({}))
+  const value = body?.result?.value
+  return { ok: res.ok && value?.ok !== false, status: res.status, value, error: value?.error || body?.result?.error?.message || '' }
+}
+
+async function resetWakeState() {
+  const base = String(process.env.EMOTIONCORE_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '')
+  try {
+    const res = await fetch(`${base}/wake/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    const data = await res.json().catch(() => ({}))
+    return { ok: res.ok && data?.ok !== false, error: data?.error || '' }
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) }
+  }
+}
+
+async function bumpContextEpoch() {
+  await mkdir(path.dirname(CONTEXT_EPOCH_PATH), { recursive: true })
+  await writeFile(CONTEXT_EPOCH_PATH, JSON.stringify({ epoch: Date.now(), at: new Date().toISOString() }), 'utf8')
 }
 
 async function loadSettings() {
@@ -573,7 +650,7 @@ async function state(ctx) {
   const toolRegistered = Boolean(tools?.get?.('soulcore_memory'))
   const statsResult = await runPython(settings, ['memory-stats'], 20000)
   const memory = parseJsonOutput(statsResult)
-  let version = '0.4.1'
+  let version = '0.5.0'
   try { version = (await readFile(VERSION_PATH, 'utf8')).trim() || version } catch {}
   return {
     ok: true,
@@ -584,6 +661,7 @@ async function state(ctx) {
     persona: await readFile(PERSONA_PATH, 'utf8').catch(() => ''),
     personaSource: { personaPath: PERSONA_PATH, agentsPath: AGENTS_PATH },
     personaPresets: await personaNames(),
+    models: await modelCatalog(ctx),
     toolRegistered,
     fish: await fishStatus(),
     db: await fileInfo(settings.dbPath),
@@ -679,6 +757,34 @@ async function action(ctx, body) {
     if (existsSync(newPath)) return { ok: false, error: `目标人格已存在：${newName}` }
     await rename(oldPath, newPath)
     return { ok: true, name: newName, message: `已重命名：${oldName} → ${newName}` }
+  }
+  if (kind === 'model-switch') {
+    const provider = String(body?.provider || '').trim()
+    const model = String(body?.model || '').trim()
+    const effort = String(body?.reasoningEffort || '').trim()
+    if (!provider || !model) return { ok: false, error: '需要 provider 和 model' }
+    const def = ctx.get('agentDefaultModel')
+    if (!def?.saveSelection) return { ok: false, error: 'agentDefaultModel 服务不可用' }
+    const sleep = await runPython(settings, ['sleep'], 180000)
+    const next = effort ? { provider, model, reasoningEffort: effort } : { provider, model }
+    await def.saveSelection(next)
+    const wakeReset = await resetWakeState()
+    const reset = await resetQqSessions(ctx)
+    await bumpContextEpoch()
+    modelCatalogCache = { at: 0, value: null }
+    const warn = []
+    if (!sleep.ok) warn.push(`睡眠整理失败：${sleep.error || '未知错误'}`)
+    if (!wakeReset.ok) warn.push(`唤醒状态重置失败：${wakeReset.error || '未知错误'}`)
+    if (!reset.ok) warn.push(`QQ 会话重置失败：${reset.error || '未知错误'}`)
+    return {
+      ok: true,
+      selection: def.currentSelection?.(),
+      sleep: sleep.ok,
+      reset,
+      warnings: warn,
+      message: `已切换 API：${provider} / ${model}；已执行睡眠整理并重置 QQ 会话`
+        + (warn.length ? `（${warn.join('；')}）` : ''),
+    }
   }
   if (kind === 'capability') {
     const key = String(body.key || '')

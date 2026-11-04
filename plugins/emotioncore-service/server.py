@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
 
 from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 DEFAULT_PORT = int(os.environ.get("EMOTIONCORE_PORT") or os.environ.get("SOULCORE_PORT") or 8765)
 DEFAULT_DB = os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or str(ROOT / "data" / "soulcore.db")
 PERSONA_PATH = Path(os.environ.get("EMOTIONCORE_PERSONA") or (ROOT / "config" / "emotioncore-persona.md"))
@@ -791,6 +791,12 @@ def _person_tag(payload: dict[str, Any]) -> dict[str, Any]:
             conn.close()
 
 
+def _wake_reset(_payload: dict[str, Any]) -> dict[str, Any]:
+    WAKE_STATE.parent.mkdir(parents=True, exist_ok=True)
+    WAKE_STATE.write_text("{}", encoding="utf-8")
+    return {"ok": True, "message": "wake state reset"}
+
+
 def _event_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     with _LOCK:
         conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
@@ -858,6 +864,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if u.path == "/context":
                 self._send(200, _context(payload))
+                return
+            if u.path == "/wake/reset":
+                self._send(200, _wake_reset(payload))
                 return
             if u.path == "/turn":
                 self._send(200, _turn(payload))

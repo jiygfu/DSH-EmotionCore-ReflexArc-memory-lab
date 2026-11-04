@@ -93,6 +93,16 @@ function localDay() {
   return new Date().toLocaleDateString('en-CA');
 }
 
+function contextEpoch(bot) {
+  try {
+    const file = path.join(bot?.dataDir || '', 'state', 'emotioncore-context-epoch.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return String(data?.epoch || 0);
+  } catch {
+    return '0';
+  }
+}
+
 function stableContextKey(text) {
   return String(text || '')
     .replace(/【此刻身体状态[\s\S]*?(?=\n\n|$)/g, '')
@@ -434,7 +444,7 @@ export default {
       traceAdapter(bot, 'before-turn', { chatKey: ev.chatKey, text: String(ev.text || '').slice(0, 80), hasOn: typeof bot.on });
       try {
         const mode = String(bot.cfg.injectContextMode || 'first_wake');
-        const cacheKey = `${String(ev.chatKey || '')}|${localDay()}`;
+        const cacheKey = `${String(ev.chatKey || '')}|${localDay()}|${contextEpoch(bot)}`;
         const cache = contextCacheOf(bot);
         const cached = cache.get(cacheKey);
         const firstForChat = !cached || (Date.now() - Number(cached.at || 0) > WAKE_GAP_MS);
