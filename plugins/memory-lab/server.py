@@ -24,6 +24,7 @@ import lab_config  # noqa: E402
 import lab_edges  # noqa: E402
 import lab_graph  # noqa: E402
 import lab_terms  # noqa: E402
+import lab_vectors  # noqa: E402
 
 DEFAULT_DB = ROOT / "data" / "soulcore.db"
 
@@ -96,6 +97,20 @@ class Handler(BaseHTTPRequestHandler):
                 return _send(self, 200, {"ok": True, **lab.rrf_recall(c, q, limit=limit)})
             finally:
                 c.close()
+        if u.path == "/vectors":
+            # S6 影子模式：看向量路现在能捞出什么，不参与注入
+            q = (qs.get("q") or [""])[0].strip()
+            if not q:
+                return _send(self, 400, {"ok": False, "error": "q required"})
+            limit = int((qs.get("limit") or ["5"])[0])
+            min_score = float((qs.get("min") or [lab_config.read().get("vectorMinScore") or 0.55])[0])
+            c = lab.connect_ro(str(DEFAULT_DB))
+            try:
+                hits = lab_vectors.search(c, q, limit=limit, min_score=min_score)
+                return _send(self, 200, {"ok": True, "q": q, "minScore": min_score,
+                                         "available": lab_vectors.available(), "items": hits})
+            finally:
+                c.close()
         return _send(self, 404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -106,8 +121,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return _send(self, 400, {"ok": False, "error": "invalid json"})
         if u.path == "/settings":
-            allowed = {k: payload[k] for k in ("humanReview", "reviewLimit", "reviewFile", "termsFile") if k in payload}
+            allowed = {k: payload[k] for k in ("humanReview", "reviewLimit", "reviewFile", "termsFile",
+                                               "vectorEnabled", "vectorMinScore") if k in payload}
             return _send(self, 200, {"ok": True, "settings": lab_config.write(allowed)})
+        if u.path == "/vectors/backfill":
+            # 新记忆进来之后补向量；只处理 active 且非 sensitive
+            limit = int(payload.get("limit") or 256)
+            c = lab.connect_ro(str(DEFAULT_DB))
+            try:
+                return _send(self, 200, {"ok": True, **lab_vectors.embed_missing(c, limit=limit)})
+            finally:
+                c.close()
         if u.path == "/terms":
             term = str(payload.get("term") or "").strip()
             kind = str(payload.get("kind") or "meta").strip()
@@ -130,6 +154,36 @@ class Handler(BaseHTTPRequestHandler):
         return _send(self, 404, {"ok": False, "error": "not found"})
 
 
+def _boot_backfill(delay: float = 3.0, interval: float = 600.0) -> None:
+    """定期补向量。
+
+    S9 顺手补的：原来只在启动时补一次，运行中新进来的记忆永远没有向量——
+    向量路会悄悄变窄，而影子对比还照旧算得"挺好"，看不出缺人。
+    现在每 10 分钟扫一遍缺口的，补上就停。
+    """
+    import threading
+    import time
+
+    def run() -> None:
+        time.sleep(delay)
+        while True:
+            if lab_vectors.available():
+                conn = None
+                try:
+                    conn = lab.connect_ro(str(DEFAULT_DB))
+                    out = lab_vectors.embed_missing(conn, limit=400)
+                    if out.get("written"):
+                        print(f"[memory-lab] backfill: {out}", flush=True)
+                except Exception as exc:  # 补不上不影响主流程
+                    print(f"[memory-lab] backfill failed: {exc}", flush=True)
+                finally:
+                    if conn is not None:
+                        conn.close()
+            time.sleep(max(60.0, float(interval)))
+
+    threading.Thread(target=run, name="memlab-backfill", daemon=True).start()
+
+
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
@@ -138,6 +192,7 @@ def main() -> int:
     args = ap.parse_args()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"memory-lab listening http://{args.host}:{args.port}")
+    _boot_backfill()
     srv.serve_forever()
     return 0
 

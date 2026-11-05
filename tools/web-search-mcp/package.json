@@ -1,0 +1,7 @@
+{
+  "name": "web-search-mcp",
+  "private": true,
+  "type": "module",
+  "description": "只读 web_search / web_fetch MCP server（stdio）。从 surfcore 迁入，去掉 MCP SDK 依赖，仅保留 js-yaml。",
+  "main": "server.mjs"
+}

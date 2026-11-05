@@ -99,6 +99,24 @@ def _closing_signals(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> dict[
     }
 
 
+def rule_verdict(signals: dict[str, Any], rows: list[sqlite3.Row]) -> dict[str, Any]:
+    """纯代码先判：明确收尾 / 明确没完 / 拿不准。
+
+    只处理两头，中间的交给模型——这才是"校准"，不是"取代"。
+    """
+    kind = str(signals.get("last_kind") or "unknown")
+    unresolved = max([float(r["unresolved"] or 0.0) for r in rows] or [0.0])
+    if kind == "ending" and unresolved < 0.6:
+        return {"verdict": "settle", "confidence": 0.78, "reason": "最后一条是明确道别"}
+    if kind == "settled" and unresolved < 0.6:
+        return {"verdict": "settle", "confidence": 0.75, "reason": "最后一条是收束语"}
+    if kind in ("question", "request"):
+        return {"verdict": "open", "confidence": 0.0, "reason": "最后一条仍是未答问题/未完成请求"}
+    if unresolved >= 0.75:
+        return {"verdict": "open", "confidence": 0.0, "reason": "未解决度偏高"}
+    return {"verdict": "unsure", "confidence": 0.0, "reason": ""}
+
+
 def _thread_prompt(rows: list[sqlite3.Row], signals: dict[str, Any] | None = None) -> str:
     signals = signals or {}
     parts = []
@@ -135,7 +153,14 @@ def _thread_prompt(rows: list[sqlite3.Row], signals: dict[str, Any] | None = Non
 """.format(segments="\n\n".join(parts), last_kind=signals.get("last_kind","unknown"), last_text=signals.get("last_text",""), has_question=signals.get("has_question",False), has_request=signals.get("has_request",False), has_ending=signals.get("has_ending",False), settled=signals.get("settled",False))
 
 
-def review_open(conn: sqlite3.Connection, *, limit: int = 2, timeout: int = 180, force: bool = False) -> dict[str, int]:
+def review_open(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 2,
+    timeout: int = 180,
+    force: bool = False,
+    rules_only: bool = False,
+) -> dict[str, int]:
     cutoff = (datetime.now().astimezone() - timedelta(days=7)).isoformat()
     rows = conn.execute(
         """SELECT * FROM episodes
@@ -154,9 +179,42 @@ def review_open(conn: sqlite3.Connection, *, limit: int = 2, timeout: int = 180,
     cfg = appraise.appraiser_config()
     model = str(cfg.get("model") or db.MODEL)
     base_url = str(cfg.get("base_url") or "http://127.0.0.1:11434")
-    stats = {"reviewed": 0, "closed": 0, "kept": 0, "failed": 0, "threads": 0}
+    stats = {"reviewed": 0, "closed": 0, "kept": 0, "failed": 0, "threads": 0, "rules": 0, "deferred": 0}
     for tid, items in candidates[: max(1, min(20, int(limit)))]:
         now = datetime.now().astimezone().isoformat()
+        # S12-C：先让规则判两头，只有拿不准的才调模型
+        signals = _closing_signals(conn, items)
+        rule = rule_verdict(signals, items)
+        if rule["verdict"] == "settle":
+            conn.execute(
+                """UPDATE episodes
+                   SET status='closed', closed_at=?, resolution_note=?,
+                       closure_confidence=?, closure_source='rules-v1', reviewed_at=?
+                   WHERE thread_id=?""",
+                (now, rule["reason"], rule["confidence"], now, tid),
+            )
+            conn.commit()
+            stats["closed"] += len(items)
+            stats["reviewed"] += len(items)
+            stats["rules"] += 1
+            continue
+        if rule["verdict"] == "open":
+            conn.execute(
+                """UPDATE episodes
+                   SET closure_confidence=0.0, closure_source='rules-v1',
+                       resolution_note=COALESCE(resolution_note, ?), reviewed_at=?
+                   WHERE thread_id=?""",
+                (rule['reason'], now, tid),
+            )
+            conn.commit()
+            stats["kept"] += len(items)
+            stats["reviewed"] += len(items)
+            stats["rules"] += 1
+            continue
+        if rules_only:
+            # 只跑规则能定的部分；拿不准的留给以后（或人工）
+            stats["deferred"] += len(items)
+            continue
         try:
             body = {
                 "model": model,

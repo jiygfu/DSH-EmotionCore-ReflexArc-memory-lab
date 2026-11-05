@@ -84,6 +84,7 @@ def _model_examples(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                SELECT id FROM appraisals WHERE memory_id = a.memory_id ORDER BY id DESC LIMIT 1
            )
              AND a.appraiser_id LIKE 'ollama:%'
+             AND COALESCE(m.status,'active')='active'
            ORDER BY a.id"""
     ).fetchall()
     out: list[dict[str, Any]] = []
@@ -168,15 +169,28 @@ def learn(conn: sqlite3.Connection, *, similarity: float = 0.4) -> dict[str, Any
                 "samples": [ex["memory_id"]],
             })
     now = db.utcnow()
+    policy = ensure_policy(conn)
+    min_support = int(policy["min_support"] or 2)
+    max_variance = float(policy["max_variance"] or 0.08)
     conn.execute("DELETE FROM appraisal_patterns")
+    written = 0
+    skipped = {"support": 0, "variance": 0}
     for i, c in enumerate(sorted(clusters, key=lambda x: -x["count"])):
-        pid = "pat_" + hashlib.sha1(
-            "|".join(sorted(c["centroid"])[:12]).encode("utf-8")
-        ).hexdigest()[:12]
         variance = {
             k: round(c["m2"].get(k, 0.0) / max(1, c["count"] - 1), 6)
             for k in DIMENSIONS
         }
+        # S8「只减不增」：样板不足、或同一类事的反应本身散得太开的，不写进表。
+        # 否则每次 learn() 都把 43 条单体样板重新灌回来，清理等于白做。
+        if int(c["count"]) < min_support:
+            skipped["support"] += 1
+            continue
+        if max((float(variance.get(k, 0.0)) for k in DIMENSIONS), default=0.0) > max_variance:
+            skipped["variance"] += 1
+            continue
+        pid = "pat_" + hashlib.sha1(
+            "|".join(sorted(c["centroid"])[:12]).encode("utf-8")
+        ).hexdigest()[:12]
         conn.execute(
             """INSERT OR REPLACE INTO appraisal_patterns
                (id, centroid_json, mean_json, variance_json, count, impact_rate,
@@ -190,8 +204,9 @@ def learn(conn: sqlite3.Connection, *, similarity: float = 0.4) -> dict[str, Any
              json.dumps(sorted(c["centroid"], key=lambda k: -c["centroid"][k])[:8], ensure_ascii=False),
              now, now),
         )
+        written += 1
     conn.commit()
-    return {"examples": len(examples), "patterns": len(clusters)}
+    return {"examples": len(examples), "patterns": written, "clusters": len(clusters), "skipped": skipped}
 
 
 def predict(conn: sqlite3.Connection, text: str) -> dict[str, Any] | None:
@@ -282,6 +297,84 @@ def note_call(conn: sqlite3.Connection, *, pattern: bool) -> None:
         (db.utcnow(),),
     )
     conn.commit()
+
+
+def prune(conn: sqlite3.Connection, *, drop_missing_samples: bool = True) -> dict[str, Any]:
+    """S8：只减不增的清理。样板不够 / 方差过大 / 样例已不在库里的 pattern 一律淘汰。
+
+    为什么必须清：`predict()` 只信 `count >= min_support` 且 `max_variance <= 阈值` 的，
+    其余就是占表的死数据；而 demo 样例（`demo:demo:*`）是早期自测造出来的，
+    拿它当"经验"会让她对真人说胡话。
+    """
+    policy = ensure_policy(conn)
+    min_support = int(policy["min_support"] or 2)
+    max_variance = float(policy["max_variance"] or 0.08)
+    rows = conn.execute("SELECT * FROM appraisal_patterns").fetchall()
+    existing = {str(r[0]) for r in conn.execute("SELECT id FROM memories")}
+    dropped: list[dict[str, Any]] = []
+    for row in rows:
+        reason = ""
+        count = int(row["count"] or 0)
+        try:
+            variance = json.loads(row["variance_json"] or "{}")
+        except Exception:
+            variance = {}
+        try:
+            samples = [str(x) for x in json.loads(row["sample_ids_json"] or "[]")]
+        except Exception:
+            samples = []
+        peak = max((float(variance.get(k, 0.0)) for k in DIMENSIONS), default=0.0)
+        if count < min_support:
+            reason = f"support={count}<{min_support}"
+        elif peak > max_variance:
+            reason = f"variance={peak:.3f}>{max_variance}"
+        elif samples and all(str(s).startswith("demo:") for s in samples):
+            reason = "样例全是 demo"
+        elif drop_missing_samples and samples and not (set(samples) & existing):
+            reason = "样例已不在库里"
+        if reason:
+            dropped.append({"id": row["id"], "count": count, "reason": reason})
+    for item in dropped:
+        conn.execute("DELETE FROM appraisal_patterns WHERE id=?", (item["id"],))
+    conn.commit()
+    return {"before": len(rows), "dropped": len(dropped), "after": len(rows) - len(dropped),
+            "items": dropped[:12]}
+
+
+def replay_shadow(conn: sqlite3.Connection, *, limit: int = 0) -> dict[str, Any]:
+    """回放历史记忆：pattern 预测 vs 现有代码分，写进 `appraisal_shadow`。
+
+    这不是训练，是给 `set_mode('auto')` 的门槛攒证据——门槛要至少 5 次对照、
+    准确率 ≥0.7，而阴影行只有等真机打分才出现，等不起。
+    """
+    policy = ensure_policy(conn)
+    sql = """SELECT m.id, m.text FROM memories m
+             WHERE m.status='active' AND COALESCE(m.sensitive,0)=0
+             ORDER BY COALESCE(m.ts, m.created_at) DESC"""
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    rows = conn.execute(sql).fetchall()
+    try:
+        from . import appraise  # 延迟导入：appraise 反过来要 import 本模块
+
+        heuristic = appraise.heuristic
+    except Exception:
+        return {"ok": False, "error": "cannot import appraise.heuristic"}
+    checked = matched = 0
+    for row in rows:
+        prediction = predict(conn, row["text"])
+        if not prediction:
+            continue
+        code = heuristic(str(row["text"] or ""), {})
+        record_shadow(conn, str(row["id"]), prediction, {**code, "source": "code-v1"})
+        checked += 1
+        pred_dims = prediction.get("dimensions") or {}
+        code_dims = code.get("dimensions") or {}
+        err = sum(abs(float(pred_dims.get(k, 0.0)) - float(code_dims.get(k, 0.0))) for k in DIMENSIONS) / len(DIMENSIONS)
+        if err <= 0.15:
+            matched += 1
+    return {"ok": True, "mode": policy["mode"], "checked": checked, "matched": matched,
+            "accuracy": round(matched / checked, 4) if checked else None}
 
 
 def set_mode(conn: sqlite3.Connection, mode: str) -> dict[str, Any]:

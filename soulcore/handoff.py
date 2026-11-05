@@ -17,6 +17,9 @@ from . import body_state, daybook, db, desire, personality
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 MAX_CHARS = 1100
+# 压缩/清洗前留给"下一个窗口"的一句话便条：进下一轮提示词一次，用过即清。
+SHORT_LIMIT = 120
+PENDING_KEY = "handoff_pending"
 
 
 def _local(ts: str | None) -> str:
@@ -315,4 +318,74 @@ def write(conn: sqlite3.Connection, *, out: str | Path | None = None) -> dict[st
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     data["path"] = str(target)
+    return data
+
+
+# ── 窗口交接（B3）：压缩/清洗前留一句，下一个窗口只看一次 ──────────────────
+
+
+def short(conn: sqlite3.Connection, limit: int = SHORT_LIMIT) -> str:
+    """≤120 字的交接便条：上次停在哪、什么没接完、现在什么状态。
+
+    纯代码（复用 build 的那几个探针），不调模型——否则又慢又飘，还可能编。
+    """
+    bits: list[str] = []
+    try:
+        episode = _latest_episode(conn)
+    except Exception:
+        episode = None
+    if episode:
+        where = _place(episode.get("conversation_key"))
+        when = _local(episode.get("end_at") or episode.get("start_at"))
+        summary = str(episode.get("summary") or "").strip()
+        line = f"停在{when}{('，' + where) if where else ''}"
+        if summary:
+            line += f"：{summary[:40]}"
+        bits.append(line)
+    loops = _loops_line()
+    if "没有" not in loops:
+        bits.append(loops.lstrip("- ").rstrip("。"))
+    try:
+        p = personality.compute_p(conn).get("p") or {}
+        words = _state_words(p)
+        if words:
+            bits.append(f"现在{words}")
+    except Exception:
+        pass
+    text = "【交接·上个窗口】" + "；".join(bits)
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)].rstrip() + "…"
+    return text
+
+
+def mark(conn: sqlite3.Connection, *, chat_key: str = "", reason: str = "compaction",
+         text: str | None = None) -> dict[str, Any]:
+    """把便条挂起：下一次 /context 注入一次，随后自动清掉。"""
+    body = short(conn) if text is None else str(text)
+    payload = {
+        "text": body,
+        "chars": len(body),
+        "reason": reason,
+        "chatKey": str(chat_key or ""),
+        "at": db.localnow(),
+    }
+    db.set_meta(conn, PENDING_KEY, payload)
+    return payload
+
+
+def take(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """取走挂起的便条（原子性够用：单进程服务，读完立即清）。"""
+    raw = db.get_meta(conn, PENDING_KEY)
+    if not raw:
+        return None
+    data = raw if isinstance(raw, dict) else None
+    if data is None:
+        try:
+            data = json.loads(str(raw))
+        except Exception:
+            data = {"text": str(raw)}
+    if not isinstance(data, dict) or not str(data.get("text") or "").strip():
+        db.set_meta(conn, PENDING_KEY, "")
+        return None
+    db.set_meta(conn, PENDING_KEY, "")
     return data

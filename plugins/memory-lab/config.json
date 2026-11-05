@@ -5,5 +5,7 @@
   "termsFile": "data/memory-lab.db",
   "note": "Human review is a debugging switch only. It should remain false in normal runs.",
   "vectorEnabled": false,
-  "vectorModel": "nomic-embed-text"
+  "vectorModel": "bge-small-zh-v1.5",
+  "vectorMinScore": 0.56,
+  "_vectorNote": "S6：bge-small-zh-v1.5（本地 ONNX，512 维）。vectorEnabled 先保持 false 走影子模式。0.56 是按本语料校准的截断：相关多在 0.58~0.66，无关多在 0.42~0.54。query 前缀默认不加（实测压平分数）。"
 }

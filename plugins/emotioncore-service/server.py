@@ -34,9 +34,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, retrieval, thread_loops  # noqa: E402
+from soulcore import body_state, daybook, db, desire, episodes, event_snapshot, event_snapshot_request, handoff, patience, people, personality, privacy, retrieval, thread_loops  # noqa: E402
+from soulcore import archive  # noqa: E402
 
-VERSION = "0.5.0"
+VERSION = "1.0.0"
 DEFAULT_PORT = int(os.environ.get("EMOTIONCORE_PORT") or os.environ.get("SOULCORE_PORT") or 8765)
 DEFAULT_DB = os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or str(ROOT / "data" / "soulcore.db")
 PERSONA_PATH = Path(os.environ.get("EMOTIONCORE_PERSONA") or (ROOT / "config" / "emotioncore-persona.md"))
@@ -291,11 +292,13 @@ def _episode_index(conn, text: str = "", *, person: str = "", day: str = "", lim
 
 
 def _memory_index(conn, text: str, *, person_id: str | None = None, limit: int = 2,
-                  scope: str = "", group_id: str = "") -> list[dict[str, Any]]:
+                  scope: str = "", group_id: str = "", min_similarity: float = 0.0,
+                  strict_privacy: bool = False) -> list[dict[str, Any]]:
     try:
         hits = retrieval.search_memories(conn, text, limit=limit, scope=scope or None,
                                          group_id=group_id or None,
-                                         person_id=person_id, include_sensitive=False)
+                                         person_id=person_id, include_sensitive=False,
+                                         min_similarity=float(min_similarity or 0.0))
     except Exception:
         return []
     out = []
@@ -305,6 +308,8 @@ def _memory_index(conn, text: str, *, person_id: str | None = None, limit: int =
             "memory_id": hit.get("id"),
             "ts": hit.get("ts"),
             "speaker": hit.get("speaker"),
+            "similarity": hit.get("similarity"),
+            "strictPrivacy": bool(strict_privacy),
             "summary": str(hit.get("text") or "").replace("\n", " ")[:140],
         })
     return out
@@ -317,11 +322,16 @@ def _recall_index(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
     limit = int(payload.get("limit") or 2)
     scope = str(payload.get("scope") or "").strip()
     group_id = str(payload.get("groupId") or "").strip()
+    min_similarity = float(payload.get("minSimilarity") or 0.0)
+    strict_privacy = bool(payload.get("strictPrivacy"))
     items = _episode_index(conn, text, person=person, day=day, limit=limit,
                            scope=scope, group_id=group_id)
     if items:
+        for item in items:
+            item["strictPrivacy"] = strict_privacy
         return items
-    return _memory_index(conn, text, limit=limit, scope=scope, group_id=group_id)
+    return _memory_index(conn, text, limit=limit, scope=scope, group_id=group_id,
+                         min_similarity=min_similarity, strict_privacy=strict_privacy)
 
 
 def _recall_impl(payload: dict[str, Any]) -> dict[str, Any]:
@@ -342,6 +352,10 @@ def _recall_impl(payload: dict[str, Any]) -> dict[str, Any]:
                     return {"ok": False, "error": "memory is outside the current chat scope"}
                 if scope and group_id and str(row["group_id"] or "") != group_id:
                     return {"ok": False, "error": "memory is outside the current group"}
+                # S7：归档行只留摘要，原文在 mem_cold 里——深挖必须回冷库拿全文
+                text = str(row["text"] or "")
+                if str(row["status"] or "") == "archived":
+                    text = archive.text_of(conn, str(row["id"]), fallback=text)
                 return {
                     "ok": True,
                     "level": "memory",
@@ -350,7 +364,8 @@ def _recall_impl(payload: dict[str, Any]) -> dict[str, Any]:
                         "ts": row["ts"],
                         "speaker": row["speaker"],
                         "scope": row["scope"],
-                        "text": str(row["text"] or "")[:1200],
+                        "archived": str(row["status"] or "") == "archived",
+                        "text": text[:1200],
                     },
                 }
             if episode_id:
@@ -466,10 +481,39 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
                 pass
 
             # L5: 第一层只给事件索引（带 episode_id）；不直接给原文列表。
+            recall_cfg = privacy.load()
             index_items = _recall_index(conn, {
                 "query": text,
-                "limit": 2,
+                "limit": max(1, min(3, int(recall_cfg.get("maxItems") or 2))),
+                "minSimilarity": recall_cfg.get("groupMinSimilarity") if is_group
+                else recall_cfg.get("minSimilarity"),
+                "strictPrivacy": bool(recall_cfg.get("privacyGate", True)) and is_group
+                and bool(recall_cfg.get("groupDropOnHit", True)),
             }) if text else []
+            privacy_dropped = 0
+            if index_items and recall_cfg.get("privacyGate", True):
+                kept = []
+                for item in index_items:
+                    if not bool(item.get("strictPrivacy")):
+                        # 私聊/非严格模式：只打码，保留句子
+                        summary = str(item.get("summary") or "")
+                        masked, found = privacy.gate(summary, strict=False)
+                        if found:
+                            item["summary"] = masked
+                            item["privacy"] = found
+                        kept.append(item)
+                        continue
+                    # 群聊严格模式：命中就整条丢，绝不把原文递给模型
+                    summary = str(item.get("summary") or "")
+                    _clean, found = privacy.gate(summary, strict=True)
+                    if found:
+                        privacy_dropped += 1
+                        continue
+                    kept.append(item)
+                index_items = kept
+            # 阈值兜底：policy 由调用方传进来，这里只保证低于 0 不会误伤
+            for item in index_items:
+                item.pop("strictPrivacy", None)
             l2 = ""
             if index_items:
                 lines = ["【事件索引（L2；按当前消息选取；需要细节用 episode_id 再查）】"]
@@ -493,6 +537,14 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
 
             continuity = "\n".join(f"- {x}" for x in CONTINUITY)
             parts: list[str] = []
+            # B3：压缩/清洗前挂的交接便条，只在这一轮出现一次（take 会立刻清掉）。
+            # 和下面 first 的完整 handoff 不冲突：那个是"刚睡醒"的长版，这个是"换窗口"的一句话。
+            try:
+                pending = handoff.take(conn)
+            except Exception:
+                pending = None
+            if pending and str(pending.get("text") or "").strip():
+                parts.append(str(pending["text"]).strip())
             if handoff_text:
                 parts.append(handoff_text)
             if p_state:
@@ -530,6 +582,25 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
             if l2:
                 parts.append(l2)
             parts.append("【最后几条】\n" + continuity)
+            # S2 隐私闸门（逐行兜底）：上面只筛了事件索引，但 handoff / 人物卡 /
+            # 未收尾话题同样可能夹带敏感原文。这里对最终拼装的每一行再扫一遍：
+            #   群聊 → 命中就整行丢弃；私聊 → 只打码。
+            if recall_cfg.get("privacyGate", True):
+                strict_drop = bool(is_group and recall_cfg.get("groupDropOnHit", True))
+                scanned: list[str] = []
+                for part in parts:
+                    kept: list[str] = []
+                    for line in str(part).split("\n"):
+                        clean, found = privacy.gate(line, strict=strict_drop)
+                        if found:
+                            privacy_dropped += 1
+                            if strict_drop:
+                                continue
+                            line = clean
+                        kept.append(line)
+                    if any(x.strip() for x in kept):
+                        scanned.append("\n".join(kept))
+                parts = scanned
             ctx = "\n\n".join(parts).strip()
             _record_layer_call({
                 "layer": "L5",
@@ -543,7 +614,11 @@ def _context(payload: dict[str, Any]) -> dict[str, Any]:
                 "episode_index": len(index_items or []),
                 "people": len(people_lines),
                 "open_loops": len(loop_lines),
+                # S0 观测：本轮真正注入的记忆类行数（事件索引 + 人物 + 未收尾 + 交接便条）
+                "result_count": len(index_items or []) + len(people_lines) + len(loop_lines)
+                + (1 if pending else 0),
                 "handoff_chars": len(handoff_text),
+                "handoff_pending_chars": len(str((pending or {}).get("text") or "")),
                 "ok": True,
             })
             return {
@@ -816,6 +891,34 @@ def _event_snapshot_request(payload: dict[str, Any]) -> dict[str, Any]:
             conn.close()
 
 
+def _handoff_compose(payload: dict[str, Any]) -> dict[str, Any]:
+    """压缩/清洗前挂一句交接便条；返回文本给管理员调试副本用。"""
+    with _LOCK:
+        conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
+        try:
+            data = handoff.mark(
+                conn,
+                chat_key=str(payload.get("chatKey") or payload.get("chat_key") or ""),
+                reason=str(payload.get("reason") or "compaction"),
+            )
+            conn.commit()
+            return {"ok": True, **data}
+        finally:
+            conn.close()
+
+
+def _handoff_take(payload: dict[str, Any]) -> dict[str, Any]:
+    """手动取走（调试/外部消费用；正常路径由 /context 自动消费）。"""
+    with _LOCK:
+        conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
+        try:
+            data = handoff.take(conn)
+            conn.commit()
+            return {"ok": True, "handoff": data}
+        finally:
+            conn.close()
+
+
 def _health() -> dict[str, Any]:
     with _LOCK:
         conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
@@ -889,12 +992,56 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/event_snapshot/request":
                 self._send(200, _event_snapshot_request(payload))
                 return
+            if u.path == "/handoff/compose":
+                self._send(200, _handoff_compose(payload))
+                return
+            if u.path == "/handoff/take":
+                self._send(200, _handoff_take(payload))
+                return
             self._send(404, {"ok": False, "error": "not found"})
         except Exception as e:  # keep the seam alive; logs the error in the response
             self._send(500, {"ok": False, "error": str(e)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("[emotioncore] " + fmt % args + "\n")
+
+
+def _boot_archive(delay: float = 5.0) -> None:
+    """S7：启动后跑一次冷热分层（配置关了就不跑；没有候选就什么都不做）。"""
+    import threading
+    import time
+
+    def run() -> None:
+        time.sleep(delay)
+        cfg = archive.load()
+        if not cfg.get("enabled", True):
+            return
+        conn = None
+        try:
+            conn = db.connect(os.environ.get("EMOTIONCORE_DB") or os.environ.get("SOULCORE_DB") or DEFAULT_DB)
+            db.init_db(conn)
+            out = archive.run(conn, limit=int(cfg.get("batch") or 200), dry_run=False)
+            if out.get("written"):
+                print(f"[emotioncore] archive: {out}", flush=True)
+            # S8：顺手把没样板 / 方差过大的元记忆淘汰掉（只减不增，很便宜）
+            from soulcore import appraisal_learning as _al
+
+            pruned = _al.prune(conn)
+            if pruned.get("dropped"):
+                print(f"[emotioncore] patterns pruned: {pruned}", flush=True)
+            # S12：felt 缺失的老记录用维度直接补一句（不调模型）
+            from soulcore import appraise as _ap
+
+            filled = _ap.fill_missing_felt(conn)
+            if filled.get("filled"):
+                print(f"[emotioncore] felt filled: {filled}", flush=True)
+        except Exception as exc:
+            print(f"[emotioncore] archive failed: {exc}", flush=True)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    threading.Thread(target=run, name="emotioncore-archive", daemon=True).start()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -907,6 +1054,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["EMOTIONCORE_DB"] = args.db
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[emotioncore] listening http://{args.host}:{args.port} db={os.environ.get('EMOTIONCORE_DB') or DEFAULT_DB}", flush=True)
+    _boot_archive()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

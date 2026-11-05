@@ -571,7 +571,10 @@ class Phase1Tests(unittest.TestCase):
             db.upsert_memory(conn, source="demo", source_record_id="hard",
                              text="我对你有点失望，也不想再猜了", scope="pet",
                              importance=1.0)
-            with patch.object(appraise, "appraise_text", side_effect=RuntimeError("cannot parse")), \
+            # S11：模型默认关，这条测的是"开了之后失败怎么办"，所以要显式打开
+            with patch.object(appraise, "model_enabled", return_value=True), \
+                 patch.object(appraise, "_note_model_result"), \
+                 patch.object(appraise, "appraise_text", side_effect=RuntimeError("cannot parse")), \
                  patch.object(appraise.feedback, "ask_owner", return_value={"ok": True}) as asked:
                 stats = appraise.appraise_pending(conn, limit=1)
             self.assertEqual(stats["failed"], 1)
@@ -581,6 +584,27 @@ class Phase1Tests(unittest.TestCase):
             row = conn.execute("SELECT appraiser_id, felt FROM appraisals").fetchone()
             self.assertEqual(row["appraiser_id"], "code-v1")
             self.assertTrue(row["felt"])
+            conn.close()
+
+    def test_appraisal_model_off_by_default(self):
+        """S11：默认不调模型；疑难条目走精细代码评分，来源仍是 code-v1。"""
+        with tempfile.TemporaryDirectory() as td:
+            conn = db.connect(Path(td) / "test.db")
+            db.init_db(conn)
+            db.upsert_memory(conn, source="demo", source_record_id="hard",
+                             text="我对你有点失望，也不想再猜了", scope="pet",
+                             importance=1.0)
+            with patch.object(appraise, "model_enabled", return_value=False), \
+                 patch.object(appraise, "appraise_text") as model_call, \
+                 patch.object(appraise.feedback, "ask_owner") as asked:
+                stats = appraise.appraise_pending(conn, limit=1)
+            self.assertFalse(model_call.called)
+            self.assertFalse(asked.called)
+            self.assertEqual(stats["failed"], 0)
+            self.assertEqual(stats["fine"], 1)
+            row = conn.execute("SELECT appraiser_id, evidence FROM appraisals").fetchone()
+            self.assertEqual(row["appraiser_id"], "code-v1")
+            self.assertIn("fine", row["evidence"])
             conn.close()
 
     def test_appraisal_learning_extracts_and_predicts(self):

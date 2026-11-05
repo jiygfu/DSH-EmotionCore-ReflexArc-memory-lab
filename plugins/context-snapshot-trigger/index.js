@@ -6,6 +6,7 @@
  * snapshot request and verifies anchors afterwards.
  */
 import { readFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -19,6 +20,8 @@ const DEFAULTS = {
   cooldownMs: 10 * 60 * 1000,
   maxMessages: 80,
   baseUrl: 'http://127.0.0.1:8765/event_snapshot/request',
+  handoffUrl: 'http://127.0.0.1:8765/handoff/compose',
+  handoffToAdmin: true,
 }
 
 function textOf(message) {
@@ -75,6 +78,43 @@ export function apply(ctx, config = {}) {
   const last = new Map()
   let disposed = false
 
+  /** 管理员 QQ：实例配置里的 adminQq（读不到就不发调试副本）。 */
+  async function adminQqOf() {
+    try {
+      const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+      const raw = JSON.parse(await readFile(path.join(home, 'dsh-onebot-qq', 'config.json'), 'utf8'))
+      return String(raw?.adminQq || '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * 交接便条（B3）：压缩前让本地服务生成一句话，挂到下一次 /context 上（一次性）。
+   * 同时把同一条发给管理员 QQ 做调试——走 qqBot 直接出站，不写进会话上下文。
+   */
+  async function composeHandoff(sid) {
+    if (cfg.handoffUrl === false) return
+    try {
+      const res = await fetch(String(cfg.handoffUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatKey: sid, reason: 'compaction' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!data?.ok || !data?.text) return
+      ctx.logger?.info?.(`[context-snapshot] handoff ${data.chars || 0} 字已挂起`)
+      if (!cfg.handoffToAdmin) return
+      const qqBot = ctx.get('qqBot')
+      const admin = await adminQqOf()
+      if (!admin || typeof qqBot?.deliver !== 'function') return
+      await qqBot.deliver(`private:${admin}`, `【交接·调试】${data.text}`)
+      ctx.logger?.info?.('[context-snapshot] handoff 已发管理员 QQ（不进本会话）')
+    } catch (err) {
+      ctx.logger?.warn?.(`[context-snapshot] handoff failed: ${err?.message || err}`)
+    }
+  }
+
   async function maybeSnapshot(agent) {
     const effective = await liveSettings(cfg)
     if (effective.enabled !== true) return
@@ -118,6 +158,8 @@ export function apply(ctx, config = {}) {
       })
       const data = await res.json().catch(() => ({}))
       ctx.logger?.info?.(`[context-snapshot] ${res.status} ${data?.snapshot?.snapshot_id || data?.skipped || ''}`)
+      // 快照落盘后再挂交接便条：两件事共用同一个"压缩前"时机，但互不阻塞。
+      await composeHandoff(String(body.chat_key))
     } catch (err) {
       ctx.logger?.warn?.(`[context-snapshot] request failed: ${err?.message || err}`)
     }

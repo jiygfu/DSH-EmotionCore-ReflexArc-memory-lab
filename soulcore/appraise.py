@@ -14,6 +14,12 @@ from . import appraisal_learning, config, correction, db, feedback, personality
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 APPRAISAL_CONFIG = Path(__file__).resolve().parent.parent / "data" / "appraisal-config.json"
+# S11：模型参与的开关在设置页（soulcore-settings → appraisalModel），默认关。
+SETTINGS = Path(__file__).resolve().parent.parent / "data" / "soul-bridge-settings.json"
+MODEL_HEALTH = Path(__file__).resolve().parent.parent / "data" / "appraise-model-health.json"
+MODEL_TIMEOUT = 20          # 单条上限，原来是 180~300 秒，够写三首诗了
+MODEL_MAX_PER_BATCH = 1     # 一轮最多调一次，别让一条坏条目占满整批
+MODEL_MAX_FAILURES = 3      # 连续失败到这个数就把开关关掉
 DIMENSIONS = [
     "security",
     "trust",
@@ -115,6 +121,63 @@ FELT_PROMPT = """你是这个角色自己的「潜意识层」。
 
 class AppraisalError(RuntimeError):
     pass
+
+
+def _read_settings() -> dict[str, Any]:
+    try:
+        raw = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def model_enabled() -> bool:
+    """设置页的 appraisalModel；缺省视为关。"""
+    return _read_settings().get("appraisalModel") is True
+
+
+def _set_setting(key: str, value: Any) -> None:
+    """写回 soul-bridge-settings.json（保留其它键，原子替换）。"""
+    raw = _read_settings()
+    raw[key] = value
+    tmp = SETTINGS.with_suffix(".json.tmp")
+    try:
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, SETTINGS)
+    except Exception:
+        pass
+
+
+def _health() -> dict[str, Any]:
+    try:
+        raw = json.loads(MODEL_HEALTH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_health(**kw: Any) -> None:
+    state = {**_health(), **kw}
+    state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        MODEL_HEALTH.parent.mkdir(parents=True, exist_ok=True)
+        MODEL_HEALTH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _note_model_result(ok: bool) -> None:
+    """连续失败累计到上限就把模型开关关掉——坏条目不该反复烧超时。"""
+    if ok:
+        if _health().get("consecutive_failures"):
+            _write_health(consecutive_failures=0)
+        return
+    failures = int(_health().get("consecutive_failures") or 0) + 1
+    _write_health(consecutive_failures=failures)
+    if failures >= MODEL_MAX_FAILURES:
+        _set_setting("appraisalModel", False)
+        _write_health(consecutive_failures=0, disabled_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
 
 def appraiser_config() -> dict[str, Any]:
@@ -399,7 +462,7 @@ def _count(text: str, words: list[str]) -> int:
     return sum(1 for word in words if word in text)
 
 
-def heuristic(text: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+def heuristic(text: str, context: dict[str, Any] | None = None, *, fine: bool = False) -> dict[str, Any]:
     """Always-available deterministic score. Every memory gets a row.
 
     This is deliberately low-confidence: it is a routine prior, not a claim of
@@ -446,8 +509,11 @@ def heuristic(text: str, context: dict[str, Any] | None = None) -> dict[str, Any
             "arousal": round(arousal, 4),
         },
         "unresolved": round(unresolved, 4),
-        "confidence": 0.4 if not (owner or importance >= 0.5) else 0.45,
-        "evidence": "deterministic scorer (routine)",
+        # 精细档只抬置信度与来源标记，维度一律不动——p 值分布才不会因为开关而跳
+        "confidence": (
+            0.5 if fine else (0.4 if not (owner or importance >= 0.5) else 0.45)
+        ),
+        "evidence": "deterministic scorer (fine)" if fine else "deterministic scorer (routine)",
         "has_impact": has_impact,
         "felt": felt,
         "latency_ms": 0,
@@ -484,11 +550,16 @@ def appraise_pending(
     limit: int = 5,
     model: str | None = None,
     fallback: bool = False,
-    timeout: int = 300,
-    code_only: bool = False,
+    timeout: int | None = None,
+    code_only: bool | None = None,
 ) -> dict[str, int]:
     rows = db.pending_jobs(conn, limit=limit)
-    stats = {"tried": 0, "code": 0, "ok": 0, "failed": 0, "fallback": 0, "pattern": 0, "shadow": 0, "asked": 0}
+    # S11：code_only=True 强制纯代码；否则看设置页开关
+    use_model = (code_only is not True) and model_enabled()
+    if timeout is None:
+        timeout = MODEL_TIMEOUT if use_model else 300
+    model_budget = MODEL_MAX_PER_BATCH if use_model else 0
+    stats = {"tried": 0, "code": 0, "fine": 0, "ok": 0, "failed": 0, "pattern": 0, "shadow": 0, "asked": 0}
     appraisal_learning.ensure_policy(conn)
     policy = appraisal_learning.ensure_policy(conn)
     baseline = personality.compute_p(conn)
@@ -519,16 +590,26 @@ def appraise_pending(
             "createdAt": raw_meta.get("createdAt") or row["ts"],
         }
         code = heuristic(text, context)
+        escalate = should_escalate(text, context, code)
+        if escalate and model_budget <= 0:
+            # 模型关着（或本轮额度用完）：疑难条目走精细代码评分，仍是纯程序，
+            # 不写 fallback、不假装模型参与过
+            code = heuristic(text, context, fine=True)
+            stats["fine"] += 1
         prediction = appraisal_learning.predict(conn, text) if policy["mode"] != "off" else None
         if prediction and policy["mode"] == "auto" and not should_escalate(text, context, code):
+            # S8：pattern 只接「怎么打分」，不接「怎么感受」。
+            # pattern 的 felt 是固定一句话，套上去她会翻来覆去说同一句；
+            # 情绪表述留给 code-v1，维度与置信度才用归纳出来的经验。
             code = {
                 **code,
                 "dimensions": prediction["dimensions"],
                 "unresolved": prediction["unresolved"],
                 "confidence": prediction["confidence"],
                 "has_impact": prediction["has_impact"],
-                "felt": prediction["felt"],
                 "source": "pattern-v1",
+                "pattern_id": prediction["pattern_id"],
+                "pattern_similarity": prediction["similarity"],
             }
         stats["tried"] += 1
         base = baseline.get("p") or {}
@@ -551,7 +632,7 @@ def appraise_pending(
             "adjusted": _apply_delta(base, delta),
             "feature": features,
         }
-        if code_only or not should_escalate(text, context, code):
+        if not (use_model and escalate and model_budget > 0):
             db.save_appraisal(conn, row["id"], **code_save)
             if code["source"] == "pattern-v1":
                 appraisal_learning.note_call(conn, pattern=True)
@@ -560,6 +641,7 @@ def appraise_pending(
                 stats["code"] += 1
             print(f"CODE  {row['id']}  source={code['source']}")
             continue
+        model_budget -= 1
         try:
             result = appraise_text(text, model=model, timeout=timeout, context=context)
             db.save_appraisal(
@@ -586,6 +668,7 @@ def appraise_pending(
                 appraisal_learning.record_shadow(conn, row["id"], prediction, result)
                 stats["shadow"] += 1
             stats["ok"] += 1
+            _note_model_result(True)
             print(f"AI    {row['id']}  {result['latency_ms']}ms  conf={result['confidence']:.2f}")
         except Exception as exc:
             # The memory still gets a score; the question goes to SurfCore's
@@ -593,6 +676,8 @@ def appraise_pending(
             db.save_appraisal(conn, row["id"], **code_save)
             stats["code"] += 1
             stats["failed"] += 1
+            _note_model_result(False)
+            _note_error(conn, str(row["id"]), exc)
             package = {
                 "memory_id": row["id"],
                 "text": text,
@@ -622,6 +707,68 @@ def appraise_pending(
     except Exception as exc:
         stats["learned_error"] = str(exc)[:200]
     return stats
+
+
+def fill_missing_felt(conn, *, limit: int = 500) -> dict[str, int]:
+    """S12：felt 为空的老记录用维度直接推一句，不调模型。
+
+    只补 felt / delta / adjusted，不动维度与置信度——补的是表述，不是判断。
+    """
+    rows = conn.execute(
+        """SELECT id, dimensions_json, unresolved FROM appraisals
+           WHERE COALESCE(TRIM(felt), '') = ''
+           ORDER BY id ASC LIMIT ?""",
+        (max(1, int(limit)),),
+    ).fetchall()
+    stats = {"filled": 0, "skipped": 0}
+    baseline = personality.compute_p(conn).get("p") or {}
+    for row in rows:
+        try:
+            raw_dims = json.loads(row["dimensions_json"])
+            if not isinstance(raw_dims, dict) or not raw_dims:
+                stats["skipped"] += 1
+                continue
+            dims = {k: float(raw_dims.get(k, 0.0)) for k in DIMENSIONS}
+        except Exception:
+            stats["skipped"] += 1
+            continue
+        felt = _derive_felt(dims, float(row["unresolved"] or 0.0))
+        if baseline:
+            delta = {k: round(dims[k] - float(baseline.get(k, 0.0)), 4) for k in DIMENSIONS}
+            adjusted = _apply_delta(baseline, delta)
+        else:
+            delta, adjusted = {}, dims
+        conn.execute(
+            "UPDATE appraisals SET felt=?, delta_json=?, adjusted_json=? WHERE id=?",
+            (felt[:240], json.dumps(delta, ensure_ascii=False),
+             json.dumps(adjusted, ensure_ascii=False), row["id"]),
+        )
+        stats["filled"] += 1
+    conn.commit()
+    return stats
+
+
+def last_error(conn) -> dict[str, Any] | None:
+    """S12：上一次打分失败的原因（没有就是 None）。"""
+    try:
+        return db.get_meta(conn, "appraisal_last_error")
+    except Exception:
+        return None
+
+
+def _note_error(conn, memory_id: str, exc: Exception) -> None:
+    try:
+        db.set_meta(
+            conn,
+            "appraisal_last_error",
+            {
+                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "memory_id": memory_id,
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+            },
+        )
+    except Exception:
+        pass
 
 
 def backfill_felt(

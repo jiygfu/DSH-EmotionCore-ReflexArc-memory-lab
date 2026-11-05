@@ -18,6 +18,8 @@ from typing import Any
 
 DIMENSIONS = ("security", "trust", "self_efficacy", "caution", "sociability", "openness", "valence", "arousal")
 GAP_MINUTES = 20
+RECALL_CONFIG = Path(__file__).resolve().parent.parent / "data" / "recall-config.json"
+VECTOR_DB = Path(__file__).resolve().parent.parent / "data" / "memory-lab.db"
 MAX_ITEMS = 12
 REFLECTION_MARKERS = (
     "常驻提示词",
@@ -43,6 +45,67 @@ def _clip(text: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def boundary_mode() -> str:
+    """S12：事件边界用旧时钟还是变化点。默认 clock；改 recall-config.json 的 eventBoundary。"""
+    try:
+        raw = json.loads(RECALL_CONFIG.read_text(encoding="utf-8"))
+        mode = str(raw.get("eventBoundary") or "clock").strip().lower()
+    except Exception:
+        mode = "clock"
+    return mode if mode in ("clock", "change") else "clock"
+
+
+def _load_vectors(ids: set[str]) -> dict[str, Any]:
+    """从 memory-lab 的 mem_vectors 里取这段用得到的向量；拿不到就退回字面判断。"""
+    if not ids:
+        return {}
+    try:
+        import numpy as np
+    except Exception:
+        return {}
+    out: dict[str, Any] = {}
+    try:
+        lab = sqlite3.connect("file:" + str(VECTOR_DB).replace("\\", "/") + "?mode=ro", uri=True)
+    except Exception:
+        return {}
+    try:
+        rows = lab.execute(
+            "SELECT memory_id, vec FROM mem_vectors WHERE memory_id IN (%s)"
+            % ",".join("?" * len(ids)),
+            tuple(ids),
+        ).fetchall()
+        for mid, blob in rows:
+            out[str(mid)] = np.frombuffer(blob, dtype=np.float32)
+    except Exception:
+        out = {}
+    finally:
+        lab.close()
+    return out
+
+
+def _change_groups(rows: list[sqlite3.Row]) -> list[list[sqlite3.Row]]:
+    """变化点切分：把 Row 包成 dict 喂给 boundary，再按索引还原。"""
+    from . import boundary
+
+    views = [
+        {
+            "id": str(r["id"]),
+            "text": r["text"],
+            "ts": r["ts"],
+            "speaker": r["speaker"],
+            "conversation_key": r["conversation_key"],
+            "unresolved": r["unresolved"],
+            "_i": i,
+        }
+        for i, r in enumerate(rows)
+    ]
+    vectors = _load_vectors({v["id"] for v in views})
+    groups: list[list[sqlite3.Row]] = []
+    for part in boundary.segment(views, vectors=vectors):
+        groups.append([rows[int(v["_i"])] for v in part])
+    return groups
+
+
 def build_day(conn: sqlite3.Connection, *, day: str | None = None) -> dict[str, Any]:
     key = day or datetime.now().astimezone().date().isoformat()
     rows = conn.execute(
@@ -60,23 +123,28 @@ def build_day(conn: sqlite3.Connection, *, day: str | None = None) -> dict[str, 
              AND COALESCE(m.consolidation_state, 'none') <> 'ignored'
            ORDER BY m.ts ASC"""
     ).fetchall()
-    groups: list[list[sqlite3.Row]] = []
-    current: list[sqlite3.Row] = []
-    last_dt: datetime | None = None
-    for row in rows:
-        dt = _parse(row["ts"])
-        if dt is None or dt.date().isoformat() != key:
-            continue
-        if current and last_dt is not None:
-            gap = dt - last_dt
-            same_conv = (row["conversation_key"] or "") == (current[-1]["conversation_key"] or "")
-            if gap > timedelta(minutes=GAP_MINUTES) or not same_conv or len(current) >= MAX_ITEMS:
-                groups.append(current)
-                current = []
-        current.append(row)
-        last_dt = dt
-    if current:
-        groups.append(current)
+    day_rows = [r for r in rows if (_parse(r["ts"]) or datetime.min.astimezone()).date().isoformat() == key]
+    if boundary_mode() == "change":
+        groups = _change_groups(day_rows)
+        rows = day_rows
+    else:
+        groups = []
+        current: list[sqlite3.Row] = []
+        last_dt: datetime | None = None
+        for row in day_rows:
+            dt = _parse(row["ts"])
+            if dt is None:
+                continue
+            if current and last_dt is not None:
+                gap = dt - last_dt
+                same_conv = (row["conversation_key"] or "") == (current[-1]["conversation_key"] or "")
+                if gap > timedelta(minutes=GAP_MINUTES) or not same_conv or len(current) >= MAX_ITEMS:
+                    groups.append(current)
+                    current = []
+            current.append(row)
+            last_dt = dt
+        if current:
+            groups.append(current)
 
     old_status = {}
     try:

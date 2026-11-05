@@ -57,6 +57,7 @@ const DEFAULTS = {
   memoryTool: true,
   memoryResolve: false,
   memoryOverview: false,
+  appraisalModel: false,
   fishRunner: false,
   mark: false,
   timeoutMs: 4000,
@@ -650,7 +651,7 @@ async function state(ctx) {
   const toolRegistered = Boolean(tools?.get?.('soulcore_memory'))
   const statsResult = await runPython(settings, ['memory-stats'], 20000)
   const memory = parseJsonOutput(statsResult)
-  let version = '0.5.0'
+  let version = '1.0.0'
   try { version = (await readFile(VERSION_PATH, 'utf8')).trim() || version } catch {}
   return {
     ok: true,

@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS memories (
   source_hash TEXT,
   ts TEXT,
   text TEXT NOT NULL,
+  text_gram TEXT,
   scope TEXT DEFAULT 'pet',
   sensitive INTEGER DEFAULT 0,
   importance REAL DEFAULT 0,
@@ -509,6 +510,47 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
 END;
 """
 
+# CJK-friendly FTS mirror.
+#
+# `memories_fts` uses unicode61, which treats a whole Chinese run as ONE token:
+# querying "上次" only matched documents that literally were "上次". The mirror
+# index stores pre-shingled text (2-char windows separated by spaces), so any
+# 2-char term matches as a real token. Created in init_db (not SCHEMA) because
+# the triggers depend on the `text_gram` column, which older DBs gain via
+# ALTER TABLE just before this runs.
+_CJK_FTS_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts2 USING fts5(
+  memory_id UNINDEXED,
+  text_gram,
+  tokenize = 'unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_fts2_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memories_fts2(memory_id, text_gram) VALUES (new.id, new.text_gram);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_fts2_au AFTER UPDATE OF text_gram ON memories BEGIN
+  DELETE FROM memories_fts2 WHERE memory_id = old.id;
+  INSERT INTO memories_fts2(memory_id, text_gram) VALUES (new.id, new.text_gram);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_fts2_ad AFTER DELETE ON memories BEGIN
+  DELETE FROM memories_fts2 WHERE memory_id = old.id;
+END;
+"""
+
+
+def gram_text(text: str, *, limit: int = 2000) -> str:
+    """Space-joined 2-char shingles, for `memories_fts2`.
+
+    Whitespace is dropped first so a shingle never straddles a line break.
+    Kept short (2000 chars) so one long memory cannot bloat the index.
+    """
+    s = "".join(ch for ch in str(text or "")[:limit] if not ch.isspace()).lower()
+    if len(s) <= 1:
+        return s
+    return " ".join(s[i:i + 2] for i in range(len(s) - 1))
+
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
     cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -622,6 +664,34 @@ def init_db(conn: sqlite3.Connection) -> None:
            SELECT id, text FROM memories
            WHERE id NOT IN (SELECT memory_id FROM memories_fts)"""
     )
+    # CJK-friendly mirror index (see _CJK_FTS_SQL). The column is added first
+    # because the triggers below reference new.text_gram.
+    _ensure_column(conn, "memories", "text_gram", "TEXT")
+    conn.executescript(_CJK_FTS_SQL)
+    for row in conn.execute(
+        "SELECT id, text FROM memories WHERE text_gram IS NULL OR text_gram=''"
+    ).fetchall():
+        # NOTE: updating text_gram (not text) keeps memories_fts_au quiet, so the
+        # legacy index is not touched twice; memories_fts2_au writes the mirror.
+        conn.execute(
+            "UPDATE memories SET text_gram=? WHERE id=?",
+            (gram_text(row["text"]), row["id"]),
+        )
+    # S1b: 召回与人物卡的常用查询路径（IF NOT EXISTS，每次启动幂等）。
+    # 纯性能，不改语义；1107 行时收益不大，但 S2 的阈值筛选会反复按人和会话扫。
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mem_person ON memories(person_id, ts);
+        CREATE INDEX IF NOT EXISTS idx_mem_conv ON memories(conversation_key, ts);
+        CREATE INDEX IF NOT EXISTS idx_mem_active ON memories(ts) WHERE status='active';
+        """
+    )
+    conn.execute(
+        """INSERT INTO memories_fts2(memory_id, text_gram)
+           SELECT id, text_gram FROM memories
+           WHERE COALESCE(text_gram,'')<>''
+             AND id NOT IN (SELECT memory_id FROM memories_fts2)"""
+    )
     conn.commit()
     _ensure_column(conn, "people", "stance", "TEXT DEFAULT 'casual'")
     _ensure_column(conn, "people", "action_hint", "TEXT")
@@ -678,6 +748,18 @@ def init_db(conn: sqlite3.Connection) -> None:
         (json.dumps(config.STORAGE, ensure_ascii=False), now),
     )
     conn.commit()
+    # S7 冷热分层：archived_at 列 + mem_cold 表（不删任何东西，只加结构）
+    try:
+        import archive as _archive  # 同包内相对导入在脚本直跑时会炸，用 try 兜住
+
+        _archive.ensure_schema(conn)
+    except Exception:
+        try:
+            from . import archive as _archive  # type: ignore
+
+            _archive.ensure_schema(conn)
+        except Exception:
+            pass
 
 
 def repair_identity_status(conn: sqlite3.Connection) -> dict[str, int]:
@@ -848,14 +930,15 @@ def upsert_memory(
             return dup["id"], False
     conn.execute(
         """INSERT INTO memories
-           (id, source, source_record_id, source_hash, ts, text, scope, sensitive,
+           (id, source, source_record_id, source_hash, ts, text, text_gram, scope, sensitive,
             importance, strength, confidence, self_relevance, unresolved,
             encoding_familiarity, current_familiarity, processing_fluency,
             appraisal_status, status, speaker, speaker_id, person_id, identity_confidence,
             identity_status, group_id, conversation_key, raw_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 0.5, 0.5, 0.0, ?, ?, ?,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 0.5, 0.5, 0.0, ?, ?, ?,
                    'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (mid, source, source_record_id, text_hash(text), ts, text[:4000], scope,
+        (mid, source, source_record_id, text_hash(text), ts, text[:4000],
+         gram_text(text[:4000]), scope,
          1 if sensitive else 0, float(importance or 0), fam, fam, fam,
          new_status, speaker, speaker_id, person_id, float(identity_confidence or 0.0),
          identity_status or "unknown", group_id, conversation_key,

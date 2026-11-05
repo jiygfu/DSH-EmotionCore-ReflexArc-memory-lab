@@ -1,6 +1,6 @@
 # DSH-EmotionCore + ReflexArc + memory-lab
 
-**OneBot 路线** · 版本：0.5.0 · [MIT License](LICENSE)
+**OneBot 路线** · 版本：1.0.0 · [MIT License](LICENSE)
 
 > 旧仓库 `EmotionCoreForDSH-surfcore` 是 v0.3.1 的 SurfCore 时代公开快照。
 > 当前插件、文档和长期更新以本仓库为准。**本仓库不再以 SurfCore 为运行前提。**

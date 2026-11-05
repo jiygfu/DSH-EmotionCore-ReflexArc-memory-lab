@@ -610,6 +610,8 @@ window.__ModuleLoader__.load({
             h(Toggle, { checked: settings.shadowEnabled !== false, onChange: (v) => set('shadowEnabled', v) })),
           h(Row, { name: '影子检索写回标记', desc: '命中时更新 familiarity / trigger；默认关闭。' },
             h(Toggle, { checked: settings.mark === true, onChange: (v) => set('mark', v) })),
+          h(Row, { name: '情绪打分用模型', desc: '默认关闭，全部本地代码评分；打开后只对少数疑难条目调一次模型（20 秒超时，每轮最多 1 条，连错 3 次自动关）。' },
+            h(Toggle, { checked: settings.appraisalModel === true, onChange: (v) => set('appraisalModel', v) })),
         ),
 
         h('div', { style: styles.section },

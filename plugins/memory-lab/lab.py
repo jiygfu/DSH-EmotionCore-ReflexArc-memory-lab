@@ -141,15 +141,79 @@ def _row(conn: sqlite3.Connection, memory_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
 
 
+# ── S3：给联想通道补元信息（事实 / 看法）──────────────────────────────
+# 只做确定性判断，不调模型：模型分不清"她记得事实"和"她当时的看法"，
+# 就会把情绪当事实复述——所以这一层必须由程序标，而不是让它自己猜。
+BELIEF_MARKERS = (
+    "我觉得", "我感觉", "感觉", "好像", "大概", "可能", "似乎", "应该是",
+    "有点", "挺", "估计", "说不定", "总觉得", "应该是吧", "大概吧",
+)
+
+
+def _when_of(ts: str) -> str:
+    """'2026-11-02T23:41:00+08:00' → '11-02'（只到日，够用了）。"""
+    text = str(ts or "")
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    return f"{m.group(2)}-{m.group(3)}" if m else text[:10]
+
+
+def _where_of(scope: str, conversation_key: str) -> str:
+    key = str(conversation_key or "")
+    if key.startswith("private:") or str(scope or "") == "private":
+        return "私聊"
+    if key.startswith("group:") or str(scope or "") == "group":
+        return "群聊"
+    return ""
+
+
+def _stance_of(text: str) -> str:
+    """看法 = 带主观标记；事实 = 其余。宁可判成事实，也别把判断当事实递上去。"""
+    source = str(text or "")
+    return "看法" if any(mark in source for mark in BELIEF_MARKERS) else "事实"
+
+
+def _who_of(row: sqlite3.Row) -> str:
+    """说话人：先看列，再翻 raw_json，最后认自己。
+
+    S9 发现 13 条老记录 speaker/person_id 都是空的（surfcore 早期写入没带说话人），
+    联想里就变成 `｜10-29··事实`——两个点连在一起，等于把某人的话挂到"没人"头上。
+    这里补一层兜底：raw_json.speaker → nickname → 自己（isSelf）。
+    """
+    speaker = str(row["speaker"] or "").strip()
+    if speaker:
+        return speaker
+    person = str(row["person_id"] or "").strip()
+    if person:
+        return person
+    try:
+        meta = json.loads(row["raw_json"] or "{}")
+    except Exception:
+        return ""
+    if not isinstance(meta, dict):
+        return ""
+    for key in ("speaker", "nickname", "card", "name", "author"):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            return value
+    return "我" if meta.get("isSelf") else ""
+
+
 def _public(row: sqlite3.Row) -> dict[str, Any]:
+    text = str(row["text"] or "")
     return {
         "memory_id": row["id"],
         "ts": row["ts"],
+        "when": _when_of(row["ts"]),
         "speaker": row["speaker"],
+        "who": _who_of(row),
+        "where": _where_of(row["scope"], row["conversation_key"]),
+        "stance": _stance_of(text),
+        # S4：随机那条要"久未触发"加成，得知道上次被想起来的时刻
+        "last_hit": row["last_triggered_at"],
         "scope": row["scope"],
         "person_id": row["person_id"],
         "thread_id": row["thread_id"],
-        "text": str(row["text"] or "")[:180],
+        "text": text[:180],
     }
 
 

@@ -191,10 +191,21 @@ def cycle(db_path: str, *, appraise_limit: int = 5, review_limit: int = 2) -> No
     try:
         db.init_db(conn)
         try:
-            stats = appraise.appraise_pending(conn, limit=max(1, min(20, appraise_limit)), timeout=180)
+            # S11：不再写死 180s/code_only，交给 soulcore-settings 的 appraisalModel 决定
+            stats = appraise.appraise_pending(conn, limit=max(1, min(20, appraise_limit)))
             log(f"appraise {stats}")
         except Exception as e:
             log(f"appraise failed: {e}")
+        # S12-C：结案审查原来没有任何调用方（死代码）。这里只跑规则能定的部分，
+        # 明确道别/收束的线程会被关掉，拿不准的不动，也不调模型。
+        try:
+            from soulcore import episode_review as _er
+
+            reviewed = _er.review_open(conn, limit=5, rules_only=True)
+            if reviewed.get("closed") or reviewed.get("rules"):
+                log(f"closure rules {reviewed}")
+        except Exception as e:
+            log(f"closure rules failed: {e}")
         try:
             bs = body_state.snapshot(write=True)
             log(f"body refresh ok stress={bs.get('states', {}).get('stress')}")

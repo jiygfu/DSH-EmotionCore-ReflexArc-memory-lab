@@ -51,6 +51,27 @@ def _fts_query(query: str) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
 
 
+def _fts_table(conn: sqlite3.Connection) -> str:
+    """Pick the FTS table to query.
+
+    `memories_fts2` (pre-shingled 2-char windows) is the CJK-capable index; the
+    legacy `memories_fts` tokenizes Chinese as one token per run, so short terms
+    never matched. Falls back when the mirror is absent or still empty (fresh or
+    not-yet-migrated DB), keeping older callers working.
+    """
+    for name in ("memories_fts2", "memories_fts"):
+        try:
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+            ).fetchone():
+                continue
+            if conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]:
+                return name
+        except sqlite3.DatabaseError:
+            continue
+    return "memories_fts"
+
+
 def search_memories(
     conn: sqlite3.Connection,
     query: str,
@@ -61,12 +82,16 @@ def search_memories(
     person_id: str | None = None,
     include_sensitive: bool = False,
     include_reflections: bool = False,
+    min_similarity: float = 0.0,
 ) -> list[dict[str, Any]]:
     """FTS5-first memory search; degrade to local 2-gram ranking.
 
     Kept separate from ``retrieve``: familiarity/trigger tracking must not be
     narrowed by a full-text prefilter. ``reflection``/``legacy_prompt`` rows
     stay in the raw store but are excluded from the default evidence surface.
+
+    ``min_similarity`` 是 S2 的阈值闸门：低于它的行连"可能相关"都算不上，
+    直接不返回（默认 0 = 不过滤，保持老调用方行为）。
     """
     query = (query or "").strip()
     if not query:
@@ -84,22 +109,23 @@ def search_memories(
     if person_id:
         where.append("m.person_id=?")
         params.append(person_id)
-    where.append("memories_fts MATCH ?")
+    fts = _fts_table(conn)
+    where.append(f"{fts} MATCH ?")
     where_sql = "WHERE " + " AND ".join(where)
     rows: list[sqlite3.Row] = []
     try:
         rows = conn.execute(
-            f"""SELECT m.* FROM memories_fts f
+            f"""SELECT m.* FROM {fts} f
                 JOIN memories m ON m.id=f.memory_id
                 {where_sql}
-                ORDER BY bm25(memories_fts) ASC
+                ORDER BY bm25({fts}) ASC
                 LIMIT ?""",
             (*params, _fts_query(query), max(20, int(limit) * 8)),
         ).fetchall()
     except (sqlite3.OperationalError, sqlite3.DatabaseError):
         rows = []
     if not rows:
-        fallback_where = [w for w in where if w != "memories_fts MATCH ?"]
+        fallback_where = [w for w in where if not w.endswith(" MATCH ?")]
         fallback_sql = ("WHERE " + " AND ".join(fallback_where)) if fallback_where else ""
         rows = conn.execute(
             f"SELECT m.* FROM memories m {fallback_sql} ORDER BY COALESCE(m.ts,m.created_at) DESC LIMIT 2000",
@@ -109,6 +135,8 @@ def search_memories(
     for row in rows:
         sim = _similarity(query, row["text"])
         if sim <= 0:
+            continue
+        if min_similarity > 0 and sim < min_similarity:
             continue
         importance = max(0.0, float(row["importance"] or 0.0))
         scored.append((0.82 * sim + 0.18 * importance, row))

@@ -20,6 +20,10 @@ data/appraisal-config.json
 *.bak-*
 *.orig
 *.rej
+*.before-event-filter
+
+# local ONNX model (~90 MB; download separately)
+plugins/memory-lab/models/
 
 # experiment artifacts (source stays, screenshots/results do not)
 experiments/assets/
