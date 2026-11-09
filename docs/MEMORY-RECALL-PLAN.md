@@ -156,7 +156,7 @@ reflex-arc [记忆联想·实验]（index.js:1523）
 | **DSH 配置** | `cordis.patch.yml` 指向新脚本；`package.json` 删掉 `surfcore` 依赖 | 下次 DSH 重启生效 |
 | **B4** | `format.js` 私聊也挂 `[昵称(QQ:号)]: `（原条件 `ev.isGroup &&` 去掉；无声者不挂空括号） | 探针 5/5 通过；**待 DSH 重启生效** |
 | **B5** | `reflex-arc` 新增 `sceneHint`（默认开）：`[场景:群 999·近5分钟 2 人·发言人 Windy(QQ:123)·事件:深夜闲聊]` | 探针 3/3 通过；不占记忆条数 |
-| **B2** | `gate-wake` 新增 `otherBots`(默认 `1452133357`)、`botNameTags`(默认 `肥鱼`)、`botChainGuard`/`botChainWindow`(3) | 探针 7/7 通过；默认值即生效，无需改 config.json |
+| **B2** | `gate-wake` 新增 `otherBots`(默认 `<另一个机器人的QQ>`)、`botNameTags`(默认 `肥鱼`)、`botChainGuard`/`botChainWindow`(3) | 探针 7/7 通过；默认值即生效，无需改 config.json |
 | **B3** | `handoff.short/mark/take` + `/handoff/compose`、`/handoff/take` + `/context` 一次性注入 + 压缩钩子发管理员副本 | 端到端 4/4；服务已重启验证新路由在线 |
 | **S0** | L5 记录补 `result_count`（事件索引+人物+未收尾+便条）；`reflex-arc` 每轮把新增 hint 累加进 `state/reflex-hints.json` | 实测 `result_count: 7`（含便条）/ `5`（无便条） |
 | **B1** | 核实：`group-memory` + `group-memory-accumulate` 都是**关**的、`qq-memory/` 不存在 → 当前无重复；只补规则 + 检查器 | `tools/mem-overlap.py`：目录不存在，无风险 |
@@ -291,8 +291,8 @@ reflex-arc [记忆联想·实验]（index.js:1523）
 ```text
 s3-probe.mjs（真模块 + 真 HTTP + 真 screenClaim，6 项全过）：
   [场景:群 999·发言人 小明(QQ:111)]
-  [记忆联想·实验｜10-31·凯坑卓斯·群聊·事实] @肥鱼雪风 这是跑团，你是玩家…那个棋子会遭遇什么？
-  [记忆联想·实验｜11-01·肥鱼雪风·群聊·看法] 想起来了，是凯坑卓斯当KP那局，我先闪避后力量检定…（想深一点就 recall）
+  [记忆联想·实验｜10-31·某人A·群聊·事实] @某群友 这是跑团，你是玩家…那个棋子会遭遇什么？
+  [记忆联想·实验｜11-01·某群友·群聊·看法] 想起来了，是某人A当KP那局，我先闪避后力量检定…（想深一点就 recall）
   最多 2 条 ✓ / 带元信息 ✓ / 每条 ≤80 字 ✓ / recall 提示只出现一次 ✓ / 有事实-看法标记 ✓ / 场景 hint 仍在 ✓
 s3-boundary.py：l2_items 无 lab 字段 ✓
 ```
@@ -322,8 +322,8 @@ s3-boundary.py：l2_items 无 lab 字段 ✓
   ③ 定向条连跑 5 次完全一致（1 种）✓   ④ 随机条 5 次 4 种 ✓
   ⑤ 每次 ≤2 条 ✓   ⑥ 都带元信息 ✓   ⑦ 正文 ≤80 字 ✓
 
-#1 ｜10-29·看法 主人说我上次记错了，我有点不安…  ‖ ｜11-01·凯坑卓斯·群聊·事实 你的衣服是你在力量检定失败…
-#2 同上                                        ‖ ｜11-01·肥鱼雪风·群聊·看法 想起来了，是凯坑卓斯当KP那局…
+#1 ｜10-29·看法 主人说我上次记错了，我有点不安…  ‖ ｜11-01·某人A·群聊·事实 你的衣服是你在力量检定失败…
+#2 同上                                        ‖ ｜11-01·某群友·群聊·看法 想起来了，是某人A当KP那局…
 ```
 
 **取舍**：随机条**没有**再套隐私闸门——它和定向条走的是同一条 `screenClaim`，敏感内容在 L5 侧已被 `privacy.gate` 挡掉；
@@ -531,7 +531,7 @@ mode：shadow → **auto**；appraisal_shadow：0 → 103 行
 
 **必须说清楚的局限**
 
-- 剩下的 5 条 pattern 覆盖的都是**开发/闲聊类**话题（"肥鱼雪风评价""是不是傲娇""recall 怎么用"），
+- 剩下的 5 条 pattern 覆盖的都是**开发/闲聊类**话题（"某群友评价""是不是傲娇""recall 怎么用"），
   不是"被骂了会怎样"这种人味经验。回放命中 103/1083 ≈ **9.5%**，其余 90% 走原来的 code-v1。
 - 命中时 pattern 与 code 的维度差平均 err≈0.10（`agreement` 门槛 0.15），
   也就是说**这次切换的行为变化很小**——分数依旧主要由 code-v1 决定，pattern 只是在相似场景上把先验挪一点。
@@ -539,7 +539,7 @@ mode：shadow → **auto**；appraisal_shadow：0 → 103 行
   以后 pattern 变多、变准时才有东西可评估。
 
 **没做的一项**：计划里第 3 条"联想通道读 pattern 的 `tokens_json` 当线索"——**主动跳过**。
-联想位只有 2 条上限，`tokens_json` 是 n-gram 碎片（"肥鱼雪/鱼雪风/不管设"），
+联想位只有 2 条上限，`tokens_json` 是 n-gram 碎片（"某群/群友/不管设"），
 塞进去只会挤掉更具体的那条记忆，反而更空泛。pattern 的作用在"她怎么反应"这一侧，不必再进口语提示通道。
 
 **验收**（`s8-e2e.py` 11 项，全过）
@@ -864,10 +864,10 @@ CREATE INDEX idx_cold_created ON mem_cold(created_at);
 | `soulcore/README.md` | 文档 |
 
 唯一活着的 surfcore 进程是 **`mcp-web-search-safe`（pid 7928）**，父进程是 DSH，拉起配置在
-`~/.dsh/profiles/desktop/cordis.patch.yml:38-45`（写死绝对路径 `C:\Users\li\surfcore\src\mcp-web-search-safe.js`）。
+`~/.dsh/profiles/desktop/cordis.patch.yml:38-45`（写死绝对路径 `<用户目录>/surfcore/src/mcp-web-search-safe.js`）。
 它是**联网搜索 MCP**，不是记忆；而且 QQ 线的 `onebot-toolgate.mjs:24` 把 `mcp__web-search-safe__web_search/fetch` 放进了允许列表——**删它会同时断掉 DSH 和机器人侧的联网搜索**。
 
-> 另外：`~/.dsh/profiles/desktop/package.json` 里 `"surfcore": "link:C:/Users/li/.dsh/plugins/surfcore"` 仍在依赖列表，但 `dsh.profile.bundles` 里**没有 surfcore** → 插件不加载。
+> 另外：`~/.dsh/profiles/desktop/package.json` 里 `"surfcore": "link:<用户目录>/.dsh/plugins/surfcore"` 仍在依赖列表，但 `dsh.profile.bundles` 里**没有 surfcore** → 插件不加载。
 > 所以"清理 surfcore"的正确做法是：删 package.json 那一行 + 把 MCP 脚本挪到 `soulproject/` 下（或改用 `dsh` 自带搜索），**不是删目录**。
 
 **✅ 已执行（2026-11-05）**：
@@ -1006,7 +1006,7 @@ B2 他机QQ静音 / 名字标签命中 / 真人未叫不回 / 真人@正常 / �
 B5 群场景 / 私聊场景 / 开关可关                                          3/3
 ```
 
-**默认值即生效，不用改 `config.json`**：`otherBots=1452133357`、`botNameTags=肥鱼`、`botChainWindow=3`、`sceneHint=开`（`effective()` 缺键回落 schema 默认值）。
+**默认值即生效，不用改 `config.json`**：`otherBots=<另一个机器人的QQ>`、`botNameTags=肥鱼`、`botChainWindow=3`、`sceneHint=开`（`effective()` 缺键回落 schema 默认值）。
 
 插件自带测试：**183 项，157 通过，20 失败**——20 项全部是 `Cannot find package '@deepseek-ai/schemastery'`（这个副本没装 peer 依赖，与我改的代码无关），改动前后数字一致，无回归。
 

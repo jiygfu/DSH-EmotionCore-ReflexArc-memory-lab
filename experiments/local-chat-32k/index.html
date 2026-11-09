@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EmotionCore Local · 32k</title>
+<style>
+  :root{--bg:#101218;--panel:#181c25;--line:#2a3140;--text:#e8ecf4;--muted:#8d98aa;--accent:#7dd3fc;--user:#1f3a4d;--bot:#20242e;--warn:#fbbf24}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  .app{max-width:900px;margin:0 auto;padding:18px}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:12px}
+  h1{font-size:18px;margin:0}
+  .sub{color:var(--muted);font-size:12px;margin-top:4px}
+  .badge{display:inline-block;padding:2px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted);font-size:11px;margin-left:6px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+  button{border:1px solid var(--line);background:#232936;color:var(--text);border-radius:9px;padding:8px 12px;cursor:pointer}
+  button:hover{border-color:#3d4a60}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary{background:#0e7490;border-color:#0e7490}
+  label.toggle{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;user-select:none}
+  #log{display:flex;flex-direction:column;gap:12px;min-height:300px;padding:10px 0 16px}
+  .msg{max-width:88%;padding:10px 12px;border-radius:12px;white-space:pre-wrap;word-break:break-word}
+  .msg.user{align-self:flex-end;background:var(--user);border:1px solid #2d5670}
+  .msg.assistant{align-self:flex-start;background:var(--bot);border:1px solid var(--line)}
+  .meta{font-size:11px;color:var(--muted);margin-top:7px;display:flex;flex-wrap:wrap;gap:8px}
+  details{margin-top:8px;font-size:12px;color:var(--muted)}
+  details pre{white-space:pre-wrap;background:#0b0d12;border:1px solid var(--line);padding:8px;border-radius:8px;max-height:180px;overflow:auto}
+  .composer{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 25%);padding-top:10px}
+  textarea{width:100%;min-height:78px;resize:vertical;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
+  .row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:8px}
+  .hint{color:var(--muted);font-size:12px}
+  .error{color:#fca5a5}
+  .loading{color:var(--warn)}
+  code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>EmotionCore Local <span class="badge">IQ2_XXS</span><span class="badge">32k</span></h1>
+      <div class="sub">本地人格 + memory-lab 记忆联想 · 不接 QQ、不调用线上聊天 API</div>
+    </div>
+    <div class="controls">
+      <label class="toggle"><input id="memory" type="checkbox" checked> 记忆联想</label>
+      <button id="clear" type="button">清空</button>
+    </div>
+  </header>
+
+  <div id="log"></div>
+
+  <div class="composer">
+    <textarea id="input" placeholder="说点什么。想触发记忆联想，可以带“上次/之前/记得/那件事”等词。"></textarea>
+    <div class="row">
+      <div class="hint" id="status">正在检查本地服务…</div>
+      <button class="primary" id="send" type="button">发送</button>
+    </div>
+  </div>
+</div>
+<script>
+const log = document.getElementById('log')
+const input = document.getElementById('input')
+const send = document.getElementById('send')
+const clear = document.getElementById('clear')
+const statusEl = document.getElementById('status')
+const memoryEl = document.getElementById('memory')
+let messages = []
+let busy = false
+
+function addMeta(wrap, extra) {
+  if (!extra) return
+  const meta = document.createElement('div')
+  meta.className = 'meta'
+  meta.textContent = [
+    extra.elapsedMs ? ((extra.elapsedMs / 1000).toFixed(1) + 's') : '',
+    extra.tokPerSec ? (extra.tokPerSec + ' tok/s') : '',
+    extra.memory?.length ? ('记忆 ' + extra.memory.length + ' 条') : '',
+    extra.numCtx ? ('ctx ' + extra.numCtx) : '',
+  ].filter(Boolean).join(' · ')
+  wrap.appendChild(meta)
+  if (extra.memory?.length || extra.systemPreview) {
+    const d = document.createElement('details')
+    const s = document.createElement('summary')
+    s.textContent = '查看本次记忆/系统提示'
+    d.appendChild(s)
+    const pre = document.createElement('pre')
+    pre.textContent = [
+      ...(extra.memory || []).map(x => `[${x.when}·${x.who}·${x.where}·${x.stance}] ${x.text}`),
+      extra.systemPreview ? '\n--- system preview ---\n' + extra.systemPreview : ''
+    ].join('\n')
+    d.appendChild(pre)
+    wrap.appendChild(d)
+  }
+}
+
+function add(role, text, extra = null) {
+  const wrap = document.createElement('div')
+  wrap.className = 'msg ' + role
+  const content = document.createElement('div')
+  content.textContent = text
+  wrap.appendChild(content)
+  addMeta(wrap, extra)
+  log.appendChild(wrap)
+  log.scrollTop = log.scrollHeight
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status')
+    const j = await r.json()
+    if (!j.ok) throw new Error(j.error || 'status failed')
+    statusEl.textContent = `${j.model} · ctx ${j.numCtx} · persona ${j.personaChars} 字`
+  } catch (e) {
+    statusEl.textContent = '本地服务未就绪：' + String(e.message || e)
+    statusEl.className = 'hint error'
+  }
+}
+
+async function sendMessage() {
+  if (busy) return
+  const text = input.value.trim()
+  if (!text) return
+  input.value = ''
+  busy = true
+  send.disabled = true
+  add('user', text)
+  messages.push({ role: 'user', text })
+
+  const wrap = document.createElement('div')
+  wrap.className = 'msg assistant'
+  const content = document.createElement('div')
+  content.textContent = '…正在加载 32k 模型'
+  wrap.appendChild(content)
+  log.appendChild(wrap)
+  log.scrollTop = log.scrollHeight
+
+  let meta = null
+  let reply = ''
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages, memory: memoryEl.checked, stream: true }),
+    })
+    if (!r.ok || !r.body) throw new Error('本地服务 HTTP ' + r.status)
+    const reader = r.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const blocks = buffer.split('\n\n')
+      buffer = blocks.pop() || ''
+      for (const block of blocks) {
+        const line = block.split('\n').find(x => x.startsWith('data: '))
+        if (!line) continue
+        let ev
+        try { ev = JSON.parse(line.slice(6)) } catch { continue }
+        if (ev.type === 'meta') {
+          meta = ev
+        } else if (ev.type === 'delta') {
+          if (reply === '') content.textContent = ''
+          reply += ev.text
+          content.textContent = reply
+          log.scrollTop = log.scrollHeight
+        } else if (ev.type === 'done') {
+          reply = ev.reply || reply
+          content.textContent = reply
+          addMeta(wrap, { ...ev, ...meta })
+          messages.push({ role: 'assistant', text: reply })
+        } else if (ev.type === 'error') {
+          throw new Error(ev.error || 'stream error')
+        }
+      }
+    }
+    if (!reply) throw new Error('模型没有返回内容')
+  } catch (e) {
+    content.textContent = '出错：' + String(e.message || e)
+    wrap.className = 'msg assistant error'
+  } finally {
+    busy = false
+    send.disabled = false
+    input.focus()
+  }
+}
+
+send.addEventListener('click', () => void sendMessage())
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void sendMessage()
+  }
+})
+clear.addEventListener('click', () => {
+  messages = []
+  log.innerHTML = ''
+  input.focus()
+})
+void refreshStatus()
+</script>
+</body>
+</html>

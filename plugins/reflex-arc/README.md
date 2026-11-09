@@ -9,7 +9,7 @@
 当前部署：
 
 ```text
-C:\Users\li\.dsh\plugins\dsh-onebot-qq-yu\plugins\reflex-arc\
+~/.dsh/plugins/dsh-onebot-qq-yu/plugins/reflex-arc/
 ```
 
 ## 当前能力

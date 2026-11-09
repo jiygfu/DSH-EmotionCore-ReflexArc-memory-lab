@@ -34,6 +34,37 @@ reports/unfinished-events-*
 reports/event-stream-shadow-*
 reports/event-snapshot-bind-*
 
+# 真实聊天内容 / 提示词转储 / 带本机群号与 QQ 的一次性审计产物：一律不进仓库
+# （2026-11-09 审计：这些文件里是真实对话原文、真实群号与主人 QQ，且曾被 git add -A 波及）
+reports/rrf-human-review*.json
+reports/boundary-label-sheet.json
+reports/boundary-labeled-*.json
+reports/prompt-audit-*/
+reports/memory-lab-boundary-*.json
+reports/memory-lab-probe-*.json
+reports/prompt-injection-analysis-*.md
+reports/dsh-onebot-adaptation-*.md
+reports/human-review-apply-*.md
+reports/curiosity-followups-*.json
+reports/context-audit-*/
+
+# 阶段性计划 / 审计笔记 / 本机路径说明：只留本机，不公开
+AGENTS.md
+docs/PLAN-V9.md
+docs/REMAINING-WORK-PLAN.md
+docs/V1-STATUS.md
+docs/QQ-CONTEXT-AUDIT.md
+docs/QQ-FEATURE-INVENTORY.md
+docs/MEMORY-LAB-ISOLATION.md
+docs/MEMORY-SCIENCE-REVIEW-PLAN.md
+docs/MEMORY-SEA-NEURON-REFERENCE-PLAN.md
+
+# 一次性审计/实验报告：多数是历史产物，且常带真实群号与对话，整目录不入库
+reports/
+
+# 本机运维脚本（写死本机绝对路径，且策略上已废弃自动拉起）
+scripts/restart-dsh-onebot.ps1
+
 # third-party plugin source used only for inspection
 external/
 

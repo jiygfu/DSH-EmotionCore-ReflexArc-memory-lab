@@ -28,7 +28,9 @@ DEFAULTS: dict[str, Any] = {
     "maxImportance": 0.15,       # 重要度高于这个就留着
     "maxTriggers": 1,            # 被用过两次以上说明还有用
     "protectMinChars": 200,      # 长消息当有信息量，不按"老"归档
-    "ownerId": "qq:542234335",   # 主人（people.is_owner 也能查，这里留个显式覆盖）
+    # 主人 QQ 不进仓库：由 data/archive-config.json 的 ownerId 覆盖（该文件被 .gitignore 排除）。
+    # 留空 = 不做"主人知识"保护；本地部署必须在 data/archive-config.json 里配好。
+    "ownerId": "",
     "testBurst": False,          # 当日测试刷屏分支（默认关，跑一段看误伤再说）
     "testBurstDays": 3,          # 至少隔几天才动
     "testBurstMinPerDay": 80,    # 当天条数达到这个量级才算刷屏

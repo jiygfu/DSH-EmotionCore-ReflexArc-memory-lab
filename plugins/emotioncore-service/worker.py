@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from soulcore import appraise, body_state, consolidate, daybook, db, dream, episodes, greeting, handoff, patience, people, purpose_seed, thread_loops, thread_model  # noqa: E402
+from soulcore import appraise, body_state, consolidate, daybook, db, dream, episodes, greeting, handoff, patience, people, persona_block, purpose_seed, thread_loops, thread_model, session_rotate_onebot  # noqa: E402
 
 LOG = Path(os.environ.get("EMOTIONCORE_WORKER_LOG") or (ROOT / "logs" / "emotioncore-worker.log"))
 SCHEDULE = Path(os.environ.get("EMOTIONCORE_SCHEDULE") or (ROOT / "data" / "emotioncore-schedule.json"))
@@ -174,9 +174,19 @@ def daily_cycle(db_path: str, *, hour: int, force: bool = False) -> bool:
         summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
         patience.write(conn)
         purpose_seed.write(conn)
+        # 4 点这份日结也是"睡前"：先让 API 复核人格变量，再写便条（顺序反了便条带旧值）
+        try:
+            persona_block.review(conn, brief=(handoff.build(conn).get("text") or ""))
+        except Exception as e:
+            log(f"persona review failed: {e}")
         handoff.write(conn)
-        db.record_sleep(conn, day_key=dr["day_key"], reason="daily", rotated=False, farewell_sent=False,
-                        details={"local_worker": True, "dream_id": dr.get("dream_id")})
+        # 日结也算一次"睡过去"：写轮换标记，反射弧下一次 before-turn 换窗口。
+        # 以前这里 rotated=False —— 每天 4 点整理完，会话却还是原来那条。
+        rotate = session_rotate_onebot.request("daily")
+        db.record_sleep(conn, day_key=dr["day_key"], reason="daily",
+                        rotated=bool(rotate.get("queued")), farewell_sent=False,
+                        details={"local_worker": True, "dream_id": dr.get("dream_id"),
+                                 "rotation": rotate})
         log(f"daily done day={dr.get('day_key')} appraised={appraised.get('tried')} episodes={ep.get('episodes')} impressions={impressions} threads={threads} loops={loops} dream_events={dr.get('events')} lifecycle={lifecycle} summary={bool(summary)}")
         return True
     except Exception as e:

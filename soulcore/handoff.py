@@ -242,6 +242,17 @@ def build(conn: sqlite3.Connection) -> dict[str, Any]:
         "【这是新会话的第一轮】",
         "刚睡醒：窗口清空，本地记忆和关系还在，需要时可查。",
     ]
+    # 人格变量：睡前整理时由 API 复核过的那段性格描述，随交接进新窗口。
+    # 放在中段而不是尾巴，是因为尾巴会先被裁掉。
+    persona_text = ""
+    try:
+        from . import persona_block
+
+        persona_text = persona_block.render()
+    except Exception:
+        persona_text = ""
+    if persona_text:
+        lines.append(persona_text)
     if episode:
         where = _place(episode.get("conversation_key"))
         when = _local(episode.get("end_at") or episode.get("start_at"))

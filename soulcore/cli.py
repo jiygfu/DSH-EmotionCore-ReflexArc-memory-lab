@@ -20,7 +20,8 @@ from typing import Any
 
 from . import (
     affect, appraise, loop_maintain, patience, people_card, appraisal_learning, balance, body_state, consolidate, context_render, correction, daybook, db, desire, dream, handoff,
-               episodes, inbox, local_assist, people, personality, purpose_seed, retrieval, session_rotation, skill_manifest, skills, sleep_farewell, social, surfcore_export)
+               episodes, inbox, local_assist, people, personality, purpose_seed, retrieval, session_rotation, session_rotate_onebot, persona_block,
+               skill_manifest, skills, sleep_farewell, social, surfcore_export)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -932,17 +933,24 @@ def cmd_sleep(args) -> int:
     # The standalone sync/export-surfcore/rotate-sessions commands remain for
     # old-data migration.
     surfcore_exported = {"ok": True, "skipped": "OneBot-only: SurfCore export skipped"}
-    farewell = {"ok": True, "sent": False, "reason": "OneBot-only: SurfCore farewell skipped"}
-    rotated = {"ok": True, "skipped": "OneBot-only: SurfCore session rotation skipped", "rotated": []}
+    farewell = sleep_farewell.maybe_send("sleep")
+    # OneBot 侧轮换：写 pending 标记，反射弧下一次 before-turn 归档旧会话并删映射。
+    # 以前这里写的是 "OneBot-only: SurfCore session rotation skipped" —— 睡眠照跑、轮换永远跳过。
+    rotated = session_rotate_onebot.request("sleep")
     loops_cleaned = loop_maintain.maintain()
     patience_state = patience.write(conn)
     seed = purpose_seed.write(conn)
+    # 人格变量：睡前让 API 看一眼今天的交接便条，决定要不要微调这段性格描述。
+    # 失败一律保留旧变量，不阻断睡眠。顺序上必须在 record_sleep 之前（它要记 persona_changed）。
+    pre_brief = handoff.build(conn).get("text") or ""
+    persona_review = persona_block.review(conn, brief=pre_brief)
+    brief = handoff.write(conn)
     sleep_count = db.record_sleep(
         conn, day_key=dr["day_key"], reason="sleep",
-        rotated=bool(rotated.get("ok")), farewell_sent=bool(farewell.get("sent")),
-        details={"dream_id": dr["dream_id"], "rotation": rotated, "loops": loops_cleaned},
+        rotated=bool(rotated.get("queued")), farewell_sent=bool(farewell.get("sent")),
+        details={"dream_id": dr["dream_id"], "rotation": rotated, "loops": loops_cleaned,
+                 "persona_changed": bool(persona_review.get("changed"))},
     )
-    brief = handoff.write(conn)
     packet = {
         "day_key": dr["day_key"],
         "daily_baseline": baseline,
@@ -963,6 +971,7 @@ def cmd_sleep(args) -> int:
         "sleep_farewell": farewell,
         "session_rotation": rotated,
         "sleep_count": sleep_count,
+        "persona_review": persona_review,
         "handoff": brief.get("path"),
         "generated_at": db.utcnow(),
     }
@@ -1010,7 +1019,7 @@ def cmd_daily(args) -> int:
     )
     summary = daybook.finalize_day(conn, day=dr["day_key"], ambient=cons.get("ambient"))
     exported = {"ok": True, "skipped": "OneBot-only: SurfCore export skipped"}
-    farewell = {"ok": True, "sent": False, "reason": "OneBot-only: SurfCore farewell skipped"}
+    farewell = sleep_farewell.maybe_send("daily")
     rotated = {"ok": True, "skipped": "OneBot-only: SurfCore session rotation skipped", "rotated": []}
     patience_state = patience.write(conn)
     seed = purpose_seed.write(conn)

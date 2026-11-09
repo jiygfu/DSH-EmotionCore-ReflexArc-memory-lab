@@ -4,8 +4,17 @@
   "reviewFile": "reports/rrf-human-review.json",
   "termsFile": "data/memory-lab.db",
   "note": "Human review is a debugging switch only. It should remain false in normal runs.",
-  "vectorEnabled": false,
+  "vectorEnabled": true,
   "vectorModel": "bge-small-zh-v1.5",
   "vectorMinScore": 0.56,
-  "_vectorNote": "S6：bge-small-zh-v1.5（本地 ONNX，512 维）。vectorEnabled 先保持 false 走影子模式。0.56 是按本语料校准的截断：相关多在 0.58~0.66，无关多在 0.42~0.54。query 前缀默认不加（实测压平分数）。"
+  "_vectorNote": "S6：bge-small-zh-v1.5（本地 ONNX，512 维）。0.56 是按本语料校准的截断：相关多在 0.58~0.66，无关多在 0.42~0.54。query 前缀默认不加（实测压平分数）。2026-11-09 起启用（P0-1），与 rrfWeights 同批。",
+  "rrfWeights": {
+    "fts": 0.6,
+    "thread": 0.4,
+    "person": 0.2,
+    "emotion": 0.3,
+    "soft_edge": 0.35,
+    "vector": 1.0
+  },
+  "_rrfWeightsNote": "vectorEnabled 与 rrfWeights 必须成对修改：只开向量不改权重提升在噪声内（S10 57%→60%）；只改权重不开向量则向量那路不跑。权重默认值见 lab.py DEFAULT_RRF_WEIGHTS。"
 }

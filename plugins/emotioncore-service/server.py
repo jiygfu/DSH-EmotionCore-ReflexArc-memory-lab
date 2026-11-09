@@ -28,7 +28,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qs, urlencode, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -930,6 +932,55 @@ def _health() -> dict[str, Any]:
             conn.close()
 
 
+def _onebot_http() -> tuple[str, str]:
+    """OneBot 的 HTTP 端点和 token（跟 dsh-onebot-qq 的实例配置保持一致）。"""
+    home = os.environ.get("DSH_ONEBOT_HOME") or os.path.expanduser("~/.dsh/dsh-onebot-qq")
+    try:
+        cfg = json.loads((Path(home) / "config.json").read_text(encoding="utf-8"))
+        ob = cfg.get("onebot") or {}
+        return str(ob.get("httpUrl") or "http://127.0.0.1:3000"), str(ob.get("httpToken") or "")
+    except Exception:
+        return "http://127.0.0.1:3000", ""
+
+
+def _farewell(payload: dict[str, Any]) -> dict[str, Any]:
+    """睡前/日结告别：一条 OneBot 私聊（或群）消息。
+
+    放在 EmotionCore 而不是 SurfCore：这是本地进程，跟 OneBot 同一台机器，
+    失败了也只是返回 sent=false，不拖睡眠流程。
+    """
+    text = str(payload.get("message") or "").strip()
+    target = str(payload.get("target") or "").strip()
+    if not text:
+        return {"ok": False, "sent": False, "reason": "empty_message"}
+    if not target:
+        return {"ok": False, "sent": False, "reason": "no_target"}
+    base, token = _onebot_http()
+    try:
+        if target.startswith("group:"):
+            api = "send_group_msg"
+            body: dict[str, Any] = {"group_id": int(target.split(":", 1)[1]), "message": text}
+        else:
+            api = "send_private_msg"
+            uid = target.split(":", 1)[1] if ":" in target else target
+            body = {"user_id": int(uid), "message": text}
+        url = f"{base.rstrip('/')}/{api}"
+        if token:
+            url += "?" + urlencode({"access_token": token})
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            out = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+        ok = out.get("retcode") == 0 or str(out.get("status") or "").lower() in ("ok", "async")
+        return {"ok": bool(ok), "sent": bool(ok), "via": "onebot-http", "target": target, "result": out}
+    except Exception as e:
+        return {"ok": False, "sent": False, "via": "onebot-http", "target": target, "reason": "send_failed", "error": str(e)}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "EmotionCore/" + VERSION
     protocol_version = "HTTP/1.1"
@@ -997,6 +1048,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if u.path == "/handoff/take":
                 self._send(200, _handoff_take(payload))
+                return
+            if u.path == "/farewell":
+                self._send(200, _farewell(payload))
                 return
             self._send(404, {"ok": False, "error": "not found"})
         except Exception as e:  # keep the seam alive; logs the error in the response

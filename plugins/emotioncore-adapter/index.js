@@ -159,6 +159,8 @@ function localInstructions(prefix = DEFAULT_PREFIX) {
     `${tool}(action="at", target=..., qq=123, text="...")`,
     `${tool}(action="recall", query="旧事关键词")  // 先取索引；再传 episode_id / memory_id 深入`,
     '被问到旧事、很久以前或具体细节时，先 recall(query=...) 取索引；查到多少说多少，不要用想象补。',
+    // S5：索引里出现 [ep:…]/[mem:…] 时，别拿"大概记得"糊过去，往下钻一层
+    `看到 ${'[ep:…]'}/${'[mem:…]'} 这类编号、又需要细节时，再调一次 ${tool}(action="recall", episode_id="…") 或 (memory_id="…") 拿原文；一次别钻超过两次。`,
     '不要调用 soulcore_memory：它已下线；QQ 线的记忆查询入口只有上面的 recall。',
     '群聊里 history/recall/user/groups 默认只查本群；不要跨到私聊或其他群。',
     '普通文本回复仍可按当前通道规则输出；不要为发一句话调用多个工具。',
@@ -198,11 +200,14 @@ function makeDispatcher(bot) {
 
   async function dispatch(args = {}) {
     const action = String(args.action || '').trim().toLowerCase();
-    const target = args.target ? normalizeTarget(args.target) : '';
     const text = String(args.text ?? '');
     // 当前 turn 是权限边界的唯一可信来源；target 只是模型给的意图。
     const turn = (() => { try { return bot.currentTurn?.() || null } catch { return null } })();
     const turnChat = String(turn?.chatKey || '');
+    // 模型漏传 target 时用本轮 chatKey 兜底。
+    // 内核那边「target 与本轮会话不一致 → 按会话纠正」是同一套语义（dsh-driver 工具壳），
+    // 这里只补「完全没传」这一种：报错会让模型重试一轮，白烧一次上下文还拖几十秒。
+    const target = args.target ? normalizeTarget(args.target) : turnChat;
     const groupTurn = Boolean(turn?.isGroup) || turnChat.startsWith('group:');
     const groupId = String(turn?.groupId || (turnChat.startsWith('group:') ? turnChat.slice(6) : '')).trim();
 

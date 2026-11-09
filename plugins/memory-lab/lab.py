@@ -88,6 +88,65 @@ FEATURE_TERMS = (
     "记忆层", "记忆系统", "检索", "向量", "模型", "api", "dsh", "emotioncore",
     "soulcore", "配置", "部署", "代码", "调用", "工具", "日志", "数据库",
 )
+# S10 的结论：fts 1.0 把向量压死了（本批 cue 上 FTS 60%、向量 83%）。
+# 默认值保持现状，实际取值由 data/memory-lab/config.json 的 rrfWeights 覆盖。
+DEFAULT_RRF_WEIGHTS = {
+    "fts": 1.0, "thread": 0.4, "person": 0.2, "emotion": 0.3, "soft_edge": 0.35, "vector": 0.8,
+}
+
+# P0-1：她自己说过"翻不到/没印象"的话不能压过真正的事实。
+# 这类记忆是真实发生过的（所以不删、不归档），只影响排序与名额。
+# P0-1b：封闭领域词表（不是"语义改写"，是可解释的小表）
+DOMAIN_TERMS = (
+    (re.compile(r"(跑团|COC|coc|人物卡|角色卡|属性卡|属性值|调查员)", re.I),
+     "力量 敏捷 体质 体型 外貌 智力 意志 教育 幸运 HP MP SAN MOV"),
+)
+
+
+def _expand_query(query: str) -> str:
+    """按领域词表补词；开关关掉就原样返回。"""
+    try:
+        if lab_config.read().get("queryExpansion") is False:
+            return query
+    except Exception:
+        pass
+    q = str(query or "")
+    extra = [words for pat, words in DOMAIN_TERMS if pat.search(q)]
+    if not extra:
+        return q
+    return (q + " " + " ".join(extra)).strip()
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r'[^a-z0-9\u4e00-\u9fff]+', '', str(s or '').lower())
+
+
+def _is_echo(text: str, query: str) -> bool:
+    """命中的就是用户这轮刚说的话本身：它已在本轮提示里，占名额没有意义。"""
+    a, b = _norm_text(text), _norm_text(query)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) < 8 or len(b) < 8:
+        return False
+    ga = {a[i:i + 2] for i in range(len(a) - 1)}
+    gb = {b[i:i + 2] for i in range(len(b) - 1)}
+    if not ga or not gb:
+        return False
+    return len(ga & gb) / len(ga | gb) >= 0.85
+
+
+DENIAL_RE = re.compile(
+    r"(我翻(不到|了|过|遍)|翻不出|没印象|不记得|记不得|确实没有|"
+    r"落在我看不见|上下文里压|我这边没有|查不到|找不到|没有一条|记不清)"
+)
+
+
+def _is_denial(text: str) -> bool:
+    return bool(DENIAL_RE.search(str(text or "")[:400]))
+
+
 META_QUERY = re.compile(r"(功能|插件|架构|提示词|prompt|token|session|代码|模型|检索|向量|dsh|emotioncore|soulcore|配置|部署|数据库|工具)", re.I)
 
 
@@ -361,7 +420,9 @@ def rrf_recall(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> dict[
     No embedding. No writes. This is a ranking experiment, not a replacement
     for the production recall path.
     """
-    seeds = baseline(conn, query, max(6, limit))
+    q_search = _expand_query(query)   # 词面/向量用扩展后的；模式与 scope 用原句
+    raw_q = str(query or '')
+    seeds = baseline(conn, q_search, max(6, limit))
     mode_meta = _query_mode(query) == "meta"
     scope_filter = _scope_of(query)
     if scope_filter:
@@ -373,7 +434,7 @@ def rrf_recall(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> dict[
     lists: dict[str, list[str]] = {"fts": [str(x["id"]) for x in seeds]}
     rows_by_id: dict[str, sqlite3.Row] = {}
     try:
-        vec_hits = lab_vectors.search(conn, query, limit=8) if lab_config.read().get("vectorEnabled") is True else []
+        vec_hits = lab_vectors.search(conn, q_search, limit=8) if lab_config.read().get("vectorEnabled") is True else []
     except Exception:
         vec_hits = []
     if vec_hits:
@@ -434,7 +495,15 @@ def rrf_recall(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> dict[
                     scored.append((sim, rid))
             scored.sort(reverse=True)
             lists.setdefault("emotion", []).extend(rid for _, rid in scored[:4])
-    weights = {"fts": 1.0, "thread": 0.4, "person": 0.2, "emotion": 0.3, "soft_edge": 0.35, "vector": 0.8}
+    weights = dict(DEFAULT_RRF_WEIGHTS)
+    try:
+        override = lab_config.read().get("rrfWeights")
+        if isinstance(override, dict):
+            for key, val in override.items():
+                if key in weights and isinstance(val, (int, float)) and not isinstance(val, bool):
+                    weights[key] = float(val)
+    except Exception:
+        pass
     scores: dict[str, float] = {}
     for name, ids in lists.items():
         for rank, mid in enumerate(_dedupe(ids), 1):
@@ -453,7 +522,17 @@ def rrf_recall(conn: sqlite3.Connection, query: str, *, limit: int = 8) -> dict[
             items.append({**_public(row), "rrf_score": round(score, 6), "rrf_adjusted": round(score - 0.002 * pen, 6), "term_penalty": pen, "axes": axes, "meta_score": _meta_score(row["text"]), "kind": _classify(row["text"])})
     finally:
         tc.close()
+    # P0-1：否认类只在"没有正向命中"时才允许排前面。
+    # 否则会出现"她越说记不得，越召回记不得"的自我强化。
     items.sort(key=lambda x: x["rrf_adjusted"], reverse=True)
+    # 否认类排在后面（只在没有正向命中时才允许靠前）
+    if any(not _is_denial(x.get("text")) for x in items):
+        items = ([x for x in items if not _is_denial(x.get("text"))]
+                 + [x for x in items if _is_denial(x.get("text"))])
+    # 回声（命中的就是用户本轮刚说的那句）排到最后：它已经在本轮提示里了
+    if any(not _is_echo(x.get("text"), raw_q) for x in items):
+        items = ([x for x in items if not _is_echo(x.get("text"), raw_q)]
+                 + [x for x in items if _is_echo(x.get("text"), raw_q)])
     return {"query": query, "items": items[: max(1, int(limit))], "lists": {k: _dedupe(v)[:8] for k, v in lists.items()}}
 
 

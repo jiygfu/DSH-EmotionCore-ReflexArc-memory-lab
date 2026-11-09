@@ -224,13 +224,13 @@ test('wake handler: already-woken messages still count and can end activity', as
   assert.equal(start.wake?.kind, 'activity-start');
 
   // @/关键词已经唤醒的普通活动消息：不重复决策，但仍进活动记录。
-  const mid = ev('我掷骰子', { wake: { kind: 'keyword', keyword: '雪风' } });
+  const mid = ev('我掷骰子', { wake: { kind: 'keyword', keyword: '阿黑' } });
   await wake(mid);
   assert.equal(mid.wake?.kind, 'keyword');
   assert.ok(mid.hint.some((x) => x.includes('长期活动')));
 
   // @ 着说“结束”也必须归档，不能因为已被唤醒就漏掉控制词。
-  const end = ev('结束', { wake: { kind: 'keyword', keyword: '雪风' } });
+  const end = ev('结束', { wake: { kind: 'keyword', keyword: '阿黑' } });
   await wake(end);
   await new Promise((resolve) => setTimeout(resolve, 260));
   const st = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'reflex-trigger.json'), 'utf8'));

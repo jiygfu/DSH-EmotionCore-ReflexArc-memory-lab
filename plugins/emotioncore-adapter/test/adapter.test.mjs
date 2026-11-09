@@ -105,6 +105,22 @@ test('invalid target/action fail closed without throwing', async () => {
 });
 
 
+test('missing target falls back to this turn chatKey instead of erroring', async () => {
+  const { bot, tools, delivered } = fakeBot();
+  bot.currentTurn = () => ({ chatKey: 'private:456', isGroup: false });
+  adapter.setup(bot);
+  const ec = tools.get('ec');
+  const r = await ec.execute({ action: 'send', text: '漏传了 target' });
+  assert.equal(r.ok, true);
+  assert.equal(r.target, 'private:456');
+  assert.equal(delivered[0].target, 'private:456');
+  // 认不出本轮会话时仍然 fail closed，不瞎猜目标
+  bot.currentTurn = () => null;
+  const r2 = await ec.execute({ action: 'send', text: 'x' });
+  assert.equal(r2.ok, false);
+  assert.match(r2.error, /target/);
+});
+
 test('after-send posts the current turn to EmotionCore /turn', async () => {
   const { bot, stages, afterSend } = fakeBot();
   bot.cfg.emotionCoreUrl = 'http://emotioncore.test';
